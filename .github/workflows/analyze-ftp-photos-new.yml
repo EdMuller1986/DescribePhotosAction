@@ -1,1 +1,53 @@
+name: Analyze FTP photos with local YOLO
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Cache YOLO weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ultralytics
+            yolo*.pt
+            models/*.pt
+          key: yolo-${{ runner.os }}-${{ vars.LOCAL_MODEL_PATH }}
+          restore-keys: |
+            yolo-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Analyze images on FTP
+        env:
+          FTP_URL: ${{ secrets.FTP_URL }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+          FTP_PHOTO_DIR: ${{ vars.FTP_PHOTO_DIR }}
+          LOCAL_MODEL_PATH: ${{ vars.LOCAL_MODEL_PATH }}
+          YOLO_CONFIDENCE: ${{ vars.YOLO_CONFIDENCE }}
+          YOLO_IOU: ${{ vars.YOLO_IOU }}
+          YOLO_IMAGE_SIZE: ${{ vars.YOLO_IMAGE_SIZE }}
+          YOLO_DEVICE: ${{ vars.YOLO_DEVICE }}
+          MAX_DETECTIONS: ${{ vars.MAX_DETECTIONS }}
+          MAX_FILES_PER_RUN: ${{ vars.MAX_FILES_PER_RUN }}
+          MAX_IMAGE_EDGE: ${{ vars.MAX_IMAGE_EDGE }}
+          JSON_INDENT: "2"
+        run: python scripts/analyze_ftp_photos.py
