@@ -2,8 +2,6 @@ name: Analyze FTP photos with local YOLO
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"
 
 permissions:
   contents: read
