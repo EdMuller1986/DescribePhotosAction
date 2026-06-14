@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """Scan an FTP/FTPS/SFTP photo folder, detect objects locally, and upload JSON results.
 
@@ -608,4 +609,27 @@ def main() -> int:
                 image, image_metadata = prepare_image_for_model(original, remote_image_path)
                 model_result = analyze_image(image, remote_image_path)
                 output = build_output_json(remote_image_path, model_result, image_metadata)
-                payload = json.dumps(out
+                payload = json.dumps(output, ensure_ascii=False, indent=json_indent).encode("utf-8")
+                client.upload_bytes(target_json_path, payload)
+                processed += 1
+                print(f"done: {target_json_path}")
+            except Exception as exc:
+                message = f"error: {remote_image_path}: {exc}"
+                errors.append(message)
+                print(message, file=sys.stderr)
+                if fail_on_errors:
+                    break
+    finally:
+        client.close()
+
+    print(f"processed: {processed}")
+    if errors:
+        print(f"errors: {len(errors)}", file=sys.stderr)
+        for message in errors:
+            print(message, file=sys.stderr)
+        return 1 if fail_on_errors else 0
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
