@@ -1,4 +1,4 @@
-name: Analyze FTP photos with local YOLO
+name: Analyze FTP photos
 
 on:
   workflow_dispatch:
@@ -8,8 +8,21 @@ permissions:
 
 jobs:
   analyze:
+    name: Analyze new FTP photos
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+
+    env:
+      FTP_URL: ${{ secrets.FTP_URL }}
+      FTP_USER: ${{ secrets.FTP_USER }}
+      FTP_PASS: ${{ secrets.FTP_PASS }}
+
+      FTP_PHOTO_DIR: ${{ vars.FTP_PHOTO_DIR || 'photo' }}
+      FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftp' }}
+      FTP_PORT: ${{ vars.FTP_PORT || '' }}
+      LOCAL_MODEL_PATH: ${{ vars.LOCAL_MODEL_PATH || 'yolo11n.pt' }}
+      MAX_FILES_PER_RUN: ${{ vars.MAX_FILES_PER_RUN || '0' }}
+      MAX_IMAGE_EDGE: ${{ vars.MAX_IMAGE_EDGE || '1600' }}
 
     steps:
       - name: Checkout repository
@@ -18,23 +31,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: "pip"
 
-      - name: Cache YOLO weights
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/ultralytics
-            yolo*.pt
-            models/*.pt
-          key: yolo-${{ runner.os }}-${{ vars.LOCAL_MODEL_PATH }}
-          restore-keys: |
-            yolo-${{ runner.os }}-
-
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
+      - name: Analyze FTP photos
+        run: |
+          python scripts/analyze_ftp_photos.py
       - name: Analyze images on FTP
         env:
           FTP_URL: ${{ secrets.FTP_URL }}
