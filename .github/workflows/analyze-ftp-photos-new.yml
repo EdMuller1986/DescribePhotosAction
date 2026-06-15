@@ -1,4 +1,4 @@
-name: Analyze FTP photos
+name: Analyze FTP media with local YOLO
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze new FTP photos
+    name: Analyze new FTP media
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -20,9 +20,27 @@ jobs:
       FTP_PHOTO_DIR: ${{ vars.FTP_PHOTO_DIR || 'photo' }}
       FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftp' }}
       FTP_PORT: ${{ vars.FTP_PORT || '' }}
+
       LOCAL_MODEL_PATH: ${{ vars.LOCAL_MODEL_PATH || 'yolo11n.pt' }}
-      MAX_FILES_PER_RUN: ${{ vars.MAX_FILES_PER_RUN || '0' }}
+      YOLO_CONFIDENCE: ${{ vars.YOLO_CONFIDENCE || '0.25' }}
+      YOLO_IOU: ${{ vars.YOLO_IOU || '0.70' }}
+      YOLO_IMAGE_SIZE: ${{ vars.YOLO_IMAGE_SIZE || '1280' }}
+      YOLO_DEVICE: ${{ vars.YOLO_DEVICE || 'cpu' }}
       MAX_IMAGE_EDGE: ${{ vars.MAX_IMAGE_EDGE || '1600' }}
+      MAX_DETECTIONS: ${{ vars.MAX_DETECTIONS || '300' }}
+
+      PROCESS_IMAGES: ${{ vars.PROCESS_IMAGES || 'true' }}
+      PROCESS_VIDEOS: ${{ vars.PROCESS_VIDEOS || 'true' }}
+      CREATE_BOXES_PREVIEW: ${{ vars.CREATE_BOXES_PREVIEW || 'false' }}
+
+      VIDEO_FRAME_INTERVAL_SECONDS: ${{ vars.VIDEO_FRAME_INTERVAL_SECONDS || '2' }}
+      VIDEO_MAX_FRAMES_PER_FILE: ${{ vars.VIDEO_MAX_FRAMES_PER_FILE || '120' }}
+      VIDEO_PREVIEW_MAX_FRAMES: ${{ vars.VIDEO_PREVIEW_MAX_FRAMES || '8' }}
+      VIDEO_PREVIEW_COLUMNS: ${{ vars.VIDEO_PREVIEW_COLUMNS || '2' }}
+
+      MAX_FILES_PER_RUN: ${{ vars.MAX_FILES_PER_RUN || '0' }}
+      JSON_INDENT: ${{ vars.JSON_INDENT || '2' }}
+      FAIL_ON_ERRORS: ${{ vars.FAIL_ON_ERRORS || 'false' }}
 
     steps:
       - name: Checkout repository
@@ -31,30 +49,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Analyze FTP photos
+      - name: Analyze FTP media
         run: |
           python scripts/analyze_ftp_photos.py
-      - name: Analyze images on FTP
-        env:
-          FTP_URL: ${{ secrets.FTP_URL }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASS: ${{ secrets.FTP_PASS }}
-          FTP_PHOTO_DIR: ${{ vars.FTP_PHOTO_DIR }}
-          LOCAL_MODEL_PATH: ${{ vars.LOCAL_MODEL_PATH }}
-          YOLO_CONFIDENCE: ${{ vars.YOLO_CONFIDENCE }}
-          YOLO_IOU: ${{ vars.YOLO_IOU }}
-          YOLO_IMAGE_SIZE: ${{ vars.YOLO_IMAGE_SIZE }}
-          YOLO_DEVICE: ${{ vars.YOLO_DEVICE }}
-          MAX_DETECTIONS: ${{ vars.MAX_DETECTIONS }}
-          MAX_FILES_PER_RUN: ${{ vars.MAX_FILES_PER_RUN }}
-          MAX_IMAGE_EDGE: ${{ vars.MAX_IMAGE_EDGE }}
-          JSON_INDENT: "2"
-        run: python scripts/analyze_ftp_photos.py
