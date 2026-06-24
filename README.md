@@ -119,8 +119,14 @@ Service accounts can read a shared My Drive folder, but Google Drive returns `40
    - Add scope: `https://www.googleapis.com/auth/drive`
    - **Test users** → add the Google account that owns the Drive folder
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**
-   - Application type: **Desktop app**
+   - Application type: **Web application**
+   - **Authorized redirect URIs** → add exactly:
+     ```text
+     http://localhost:8080/
+     ```
    - Copy `client_id` and `client_secret`
+
+   Important: a **Desktop app** client often causes `Missing required parameter: redirect_uri`. Use **Web application** with the redirect URI above.
 
 #### 2. Cloud Shell
 
@@ -130,7 +136,6 @@ Service accounts can read a shared My Drive folder, but Google Drive returns `40
 ```bash
 git clone https://github.com/EdMuller1986/DescribePhotosAction.git
 cd DescribePhotosAction
-pip install google-auth-oauthlib
 python scripts/get_gdrive_oauth_token.py
 ```
 

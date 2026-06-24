@@ -2,12 +2,13 @@
 """One-time helper to obtain a Google Drive OAuth refresh token.
 
 Designed for Google Cloud Shell (https://shell.cloud.google.com/):
-  pip install google-auth-oauthlib
   python scripts/get_gdrive_oauth_token.py
 
-You can also pass client credentials via environment variables:
-  GOOGLE_DRIVE_OAUTH_CLIENT_ID
-  GOOGLE_DRIVE_OAUTH_CLIENT_SECRET
+Uses only Python stdlib (no pip install required).
+
+Before running, configure OAuth client in Google Cloud Console:
+  Credentials -> OAuth client ID -> Web application
+  Authorized redirect URIs: http://localhost:8080/
 """
 
 from __future__ import annotations
@@ -15,41 +16,42 @@ from __future__ import annotations
 import json
 import os
 import sys
-
-from google_auth_oauthlib.flow import InstalledAppFlow
+import urllib.error
+import urllib.parse
+import urllib.request
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+REDIRECT_URI = "http://localhost:8080/"
 
 
-def load_client_config() -> dict:
+def load_credentials() -> tuple[str, str]:
     client_id = os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_SECRET", "").strip()
     if client_id and client_secret:
-        return {
-            "installed": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uris": ["http://localhost"],
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        }
+        return client_id, client_secret
 
-    print("Enter OAuth Desktop client credentials from Google Cloud Console.")
+    print("Enter OAuth client credentials from Google Cloud Console.")
+    print("Client type must be: Web application")
+    print(f"Authorized redirect URI must include: {REDIRECT_URI}")
+    print()
     client_id = input("client_id: ").strip()
     client_secret = input("client_secret: ").strip()
     if not client_id or not client_secret:
         raise SystemExit("client_id and client_secret are required")
+    return client_id, client_secret
 
-    return {
-        "installed": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uris": ["http://localhost"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }
+
+def build_auth_url(client_id: str) -> str:
+    params = {
+        "client_id": client_id,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": DRIVE_SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
     }
+    return "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
 
 
 def extract_code(raw: str) -> str:
@@ -59,38 +61,58 @@ def extract_code(raw: str) -> str:
     return value
 
 
-def main() -> int:
-    client_config = load_client_config()
-    flow = InstalledAppFlow.from_client_config(client_config, scopes=[DRIVE_SCOPE])
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
+def exchange_code(client_id: str, client_secret: str, code: str) -> dict:
+    body = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": REDIRECT_URI,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Token exchange failed ({exc.code}): {details}") from exc
+
+
+def main() -> int:
+    client_id, client_secret = load_credentials()
+    auth_url = build_auth_url(client_id)
 
     print()
-    print("1) Open this URL in your browser (same Google account that owns the Drive folder):")
+    print("Open this URL in your browser (same Google account that owns the Drive folder):")
     print(auth_url)
     print()
-    print("2) Allow access. The browser will redirect to localhost and show an error page.")
-    print("   Copy the FULL address bar URL, or only the value of the 'code' parameter.")
+    print("After Allow, the browser goes to localhost:8080 and shows a connection error.")
+    print("Copy the FULL address bar URL, or only the value of the 'code' parameter.")
     print()
     raw_code = input("Paste redirect URL or code here: ")
     code = extract_code(raw_code)
-    flow.fetch_token(code=code)
+    token_response = exchange_code(client_id, client_secret, code)
 
-    refresh_token = flow.credentials.refresh_token
+    refresh_token = token_response.get("refresh_token")
     if not refresh_token:
         print(
             "ERROR: refresh_token is empty. Revoke app access at "
-            "https://myaccount.google.com/permissions and run again with prompt=consent.",
+            "https://myaccount.google.com/permissions and run again.",
             file=sys.stderr,
         )
+        print("Token response:", json.dumps(token_response, indent=2), file=sys.stderr)
         return 1
 
     payload = {
-        "client_id": client_config["installed"]["client_id"],
-        "client_secret": client_config["installed"]["client_secret"],
+        "client_id": client_id,
+        "client_secret": client_secret,
         "refresh_token": refresh_token,
     }
 
