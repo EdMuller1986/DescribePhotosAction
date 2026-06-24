@@ -1,8 +1,8 @@
 # DescribePhotosAction
 
-GitHub Actions workflow for local YOLO object detection on media files stored on FTP/FTPS/SFTP.
+GitHub Actions workflows for local YOLO object detection on media files stored on FTP/FTPS/SFTP or Google Drive.
 
-The workflow is manual only. It scans a remote folder, finds images and videos, skips media that already has a sibling JSON result, and uploads analysis outputs back to the same FTP tree.
+The workflows are manual only. They scan a remote folder, find images and videos, skip media that already has a sibling JSON result, and upload analysis outputs back to the same storage tree.
 
 No OpenAI API is used.
 
@@ -10,7 +10,9 @@ No OpenAI API is used.
 
 ```text
 .github/workflows/analyze-ftp-photos.yml
+.github/workflows/analyze-gdrive-photos.yml
 scripts/analyze_ftp_photos.py
+scripts/analyze_gdrive_photos.py
 requirements.txt
 README.md
 ```
@@ -88,6 +90,28 @@ Video preview images are intentionally not generated.
 
 When tracking is enabled, video JSON contains `track_id` values and a `tracks` summary with `first_seen_sec`, `last_seen_sec`, `duration_sec`, `frames_seen`, and optional path points.
 
-## Manual run
+## Google Drive workflow
+
+### Required secret
+
+| Secret | Meaning |
+|---|---|
+| `GOOGLE_DRIVE_CREDENTIALS` | Service account JSON key with Drive API access |
+
+Share the target Google Drive folder with the service account email from that JSON (`client_email`).
+
+### Manual run
+
+Open GitHub Actions, select **Analyze Google Drive media with local YOLO**, click **Run workflow**, and paste the full folder URL, for example:
+
+```text
+https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz
+```
+
+Bare folder IDs are also accepted.
+
+The workflow uses the same processing variables as the FTP workflow.
+
+## Manual run (FTP)
 
 Open GitHub Actions, select **Analyze FTP media with local YOLO**, and click **Run workflow**.
