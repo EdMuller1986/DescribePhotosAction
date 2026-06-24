@@ -1,0 +1,5 @@
+terminals/
+config/surveillance.local.json
+config/surveillance/*.jpg
+config/surveillance/*.png
+config/surveillance/surveillance.json

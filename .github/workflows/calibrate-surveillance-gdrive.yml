@@ -1,10 +1,10 @@
-name: Surveillance day summary from Google Drive
+name: Calibrate surveillance from Google Drive
 
 on:
   workflow_dispatch:
     inputs:
       drive_url:
-        description: 'Google Drive folder URL with surveillance videos'
+        description: 'Google Drive folder URL with a daytime reference photo'
         required: true
         type: string
 
@@ -13,10 +13,10 @@ permissions:
   actions: write
 
 jobs:
-  summarize:
-    name: Build surveillance day summary
+  calibrate:
+    name: Build surveillance calibration on Drive
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 30
 
     env:
       GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
@@ -25,8 +25,6 @@ jobs:
       GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET }}
       GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN }}
       SURVEILLANCE_GDRIVE_CONFIG_DIR: config
-      SURVEILLANCE_GDRIVE_CONFIG_FILE: surveillance.json
-      SURVEILLANCE_GDRIVE_MASK_FILE: ignore_mask.png
 
     steps:
       - name: Delete previous workflow runs
@@ -36,7 +34,7 @@ jobs:
           CURRENT="${{ github.run_id }}"
           gh run list \
             --repo "${{ github.repository }}" \
-            --workflow analyze-surveillance-gdrive.yml \
+            --workflow calibrate-surveillance-gdrive.yml \
             --limit 200 \
             --json databaseId \
             --jq ".[] | select(.databaseId != ${CURRENT}) | .databaseId" | \
@@ -77,8 +75,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Analyze surveillance video on Google Drive
+      - name: Calibrate surveillance zones on Google Drive
         env:
           GDRIVE_FOLDER_ID: ${{ steps.parse.outputs.folder_id }}
         run: |
-          python scripts/analyze_surveillance_gdrive.py
+          python scripts/calibrate_surveillance_gdrive.py
