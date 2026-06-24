@@ -6,8 +6,9 @@ Behavior mirrors analyze_ftp_photos.py:
 - process image and video files without a sibling JSON result;
 - write JSON, YOLO TXT, and optional previews back to the same Drive tree.
 
-Requires a service account JSON in GOOGLE_DRIVE_CREDENTIALS. Share the target
-folder with the service account email.
+Auth options:
+- OAuth refresh token via GOOGLE_DRIVE_OAUTH_CREDENTIALS (recommended for My Drive)
+- Service account JSON via GOOGLE_DRIVE_CREDENTIALS (Shared Drive / Workspace)
 """
 
 from __future__ import annotations
@@ -19,9 +20,13 @@ import posixpath
 import re
 import sys
 from dataclasses import dataclass
+from typing import Any
 
+from google.auth.transport.requests import Request
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from analyze_ftp_photos import (
@@ -47,11 +52,20 @@ _FOLDER_ID_PATTERNS = (
     re.compile(r"^([A-Za-z0-9_-]{20,})$"),
 )
 
+_WRITE_DENIED_HELP = (
+    "Google Drive write access denied. Service accounts can read shared My Drive "
+    "folders but cannot create files there. Use one of these options:\n"
+    "1) Add GOOGLE_DRIVE_OAUTH_CREDENTIALS with client_id, client_secret and "
+    "refresh_token for the Google account that owns the folder.\n"
+    "2) Move media to a Shared Drive and grant the service account Content manager "
+    "access."
+)
+
 
 @dataclass(frozen=True)
 class GDriveSettings:
     folder_id: str
-    credentials_json: str
+    credentials: Any
     model_path: str
     yolo_confidence: float
     yolo_iou: float
@@ -88,10 +102,53 @@ def parse_folder_id(raw: str) -> str:
     raise RuntimeError(f"Cannot parse Google Drive folder ID from: {value!r}")
 
 
-def load_settings() -> GDriveSettings:
+def _oauth_parts() -> tuple[str, str, str]:
+    refresh_token = os.getenv("GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN", "").strip()
+    client_id = os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_SECRET", "").strip()
+
+    oauth_json = os.getenv("GOOGLE_DRIVE_OAUTH_CREDENTIALS", "").strip()
+    if oauth_json:
+        data = json.loads(oauth_json)
+        refresh_token = data.get("refresh_token", refresh_token) or refresh_token
+        client_id = data.get("client_id", client_id) or client_id
+        client_secret = data.get("client_secret", client_secret) or client_secret
+        installed = data.get("installed") or data.get("web") or {}
+        client_id = installed.get("client_id", client_id) or client_id
+        client_secret = installed.get("client_secret", client_secret) or client_secret
+
+    return refresh_token, client_id, client_secret
+
+
+def build_drive_credentials() -> Any:
+    refresh_token, client_id, client_secret = _oauth_parts()
+    if refresh_token and client_id and client_secret:
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=DRIVE_SCOPES,
+        )
+        creds.refresh(Request())
+        print("auth: Google Drive OAuth user credentials")
+        return creds
+
     credentials_json = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "").strip()
-    if not credentials_json:
-        raise RuntimeError("GOOGLE_DRIVE_CREDENTIALS secret is required")
+    if credentials_json:
+        info = json.loads(credentials_json)
+        print(f"auth: Google Drive service account {info.get('client_email', '')}")
+        return service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+
+    raise RuntimeError(
+        "Google Drive auth is required. Set GOOGLE_DRIVE_OAUTH_CREDENTIALS "
+        "(recommended for My Drive) or GOOGLE_DRIVE_CREDENTIALS (service account)."
+    )
+
+
+def load_settings() -> GDriveSettings:
+    credentials = build_drive_credentials()
 
     folder_raw = os.getenv("GDRIVE_FOLDER_ID", "").strip() or os.getenv("GDRIVE_URL", "").strip()
     folder_id = parse_folder_id(folder_raw)
@@ -104,7 +161,7 @@ def load_settings() -> GDriveSettings:
 
     return GDriveSettings(
         folder_id=folder_id,
-        credentials_json=credentials_json,
+        credentials=credentials,
         model_path=os.getenv("LOCAL_MODEL_PATH", "yolo11n.pt").strip() or "yolo11n.pt",
         yolo_confidence=env_float("YOLO_CONFIDENCE", 0.25),
         yolo_iou=env_float("YOLO_IOU", 0.70),
@@ -132,13 +189,12 @@ def load_settings() -> GDriveSettings:
 
 
 class GDriveClient(RemoteClient):
-    def __init__(self, folder_id: str, credentials_json: str) -> None:
-        info = json.loads(credentials_json)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
-        self.service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    def __init__(self, folder_id: str, credentials: Any) -> None:
+        self.service = build("drive", "v3", credentials=credentials, cache_discovery=False)
         self.root_folder_id = folder_id
         self._files_by_path: dict[str, dict[str, str]] = {}
         self._folder_ids_by_path: dict[str, str] = {"": folder_id, ".": folder_id}
+        self._flat_upload_prefixes: set[str] = set()
 
     def _list_children(self, folder_id: str) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
@@ -200,18 +256,73 @@ class GDriveClient(RemoteClient):
                 self._folder_ids_by_path[path] = item["id"]
                 return item["id"]
 
-        created = (
-            self.service.files()
-            .create(
-                body={"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]},
-                fields="id",
-                supportsAllDrives=True,
+        try:
+            created = (
+                self.service.files()
+                .create(
+                    body={"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]},
+                    fields="id",
+                    supportsAllDrives=True,
+                )
+                .execute()
             )
-            .execute()
-        )
+        except HttpError as exc:
+            if exc.resp.status == 403:
+                self._flat_upload_prefixes.add(path)
+                print(
+                    f"warning: cannot create Drive folder {path!r}; "
+                    f"nested outputs will use flat names in the parent folder",
+                    file=sys.stderr,
+                )
+                return parent_id
+            raise
         folder_id = created["id"]
         self._folder_ids_by_path[path] = folder_id
         return folder_id
+
+    def _resolve_upload_target(self, path: str) -> tuple[str, str]:
+        path = normalize_remote_path(path)
+        parent_path = posixpath.dirname(path)
+        name = posixpath.basename(path)
+
+        for prefix in sorted(self._flat_upload_prefixes, key=len, reverse=True):
+            if path == prefix or path.startswith(prefix + "/"):
+                flat_parent = posixpath.dirname(prefix)
+                suffix = path[len(prefix) :].lstrip("/")
+                flat_name = posixpath.basename(prefix) + ("__" + suffix if suffix else "")
+                parent_id = self._parent_folder_id(flat_parent)
+                return parent_id, flat_name
+
+        parent_id = self._parent_folder_id(parent_path)
+        return parent_id, name
+
+    def verify_write_access(self) -> None:
+        test_name = ".describe-photos-action-write-test"
+        media = MediaIoBaseUpload(io.BytesIO(b"ok"), mimetype="text/plain", resumable=False)
+        created_id = None
+        try:
+            created = (
+                self.service.files()
+                .create(
+                    body={"name": test_name, "parents": [self.root_folder_id]},
+                    media_body=media,
+                    fields="id",
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+            created_id = created["id"]
+            print("write check: ok")
+        except HttpError as exc:
+            if exc.resp.status == 403:
+                raise RuntimeError(_WRITE_DENIED_HELP) from exc
+            raise
+        finally:
+            if created_id:
+                try:
+                    self.service.files().delete(fileId=created_id, supportsAllDrives=True).execute()
+                except Exception:
+                    pass
 
     def list_files(self, root: str) -> list[str]:
         del root
@@ -267,45 +378,48 @@ class GDriveClient(RemoteClient):
 
     def upload_bytes(self, path: str, data: bytes) -> None:
         path = normalize_remote_path(path)
-        parent_path = posixpath.dirname(path)
-        name = posixpath.basename(path)
-        parent_id = self._parent_folder_id(parent_path)
+        parent_id, name = self._resolve_upload_target(path)
 
         existing = self._lookup_file(path)
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/octet-stream", resumable=True)
-        if existing:
-            self.service.files().update(
-                fileId=existing["id"],
-                media_body=media,
-                supportsAllDrives=True,
-            ).execute()
-            return
-
-        for item in self._list_children(parent_id):
-            if item.get("mimeType") != FOLDER_MIME and item["name"] == name:
+        try:
+            if existing:
                 self.service.files().update(
-                    fileId=item["id"],
+                    fileId=existing["id"],
                     media_body=media,
                     supportsAllDrives=True,
                 ).execute()
-                self._files_by_path[path] = {"id": item["id"], "parent_id": parent_id, "name": name}
                 return
 
-        created = (
-            self.service.files()
-            .create(
-                body={"name": name, "parents": [parent_id]},
-                media_body=media,
-                fields="id",
-                supportsAllDrives=True,
+            for item in self._list_children(parent_id):
+                if item.get("mimeType") != FOLDER_MIME and item["name"] == name:
+                    self.service.files().update(
+                        fileId=item["id"],
+                        media_body=media,
+                        supportsAllDrives=True,
+                    ).execute()
+                    self._files_by_path[path] = {"id": item["id"], "parent_id": parent_id, "name": name}
+                    return
+
+            created = (
+                self.service.files()
+                .create(
+                    body={"name": name, "parents": [parent_id]},
+                    media_body=media,
+                    fields="id",
+                    supportsAllDrives=True,
+                )
+                .execute()
             )
-            .execute()
-        )
-        self._files_by_path[path] = {
-            "id": created["id"],
-            "parent_id": parent_id,
-            "name": name,
-        }
+            self._files_by_path[path] = {
+                "id": created["id"],
+                "parent_id": parent_id,
+                "name": name,
+            }
+        except HttpError as exc:
+            if exc.resp.status == 403:
+                raise RuntimeError(_WRITE_DENIED_HELP) from exc
+            raise
 
 
 def to_ftp_settings(settings: GDriveSettings):
@@ -346,7 +460,7 @@ def to_ftp_settings(settings: GDriveSettings):
 
 def run() -> int:
     settings = load_settings()
-    client = GDriveClient(settings.folder_id, settings.credentials_json)
+    client = GDriveClient(settings.folder_id, settings.credentials)
     ftp_settings = to_ftp_settings(settings)
     processed = 0
     errors = 0
@@ -354,6 +468,7 @@ def run() -> int:
 
     try:
         print(f"scan root folder: {settings.folder_id}")
+        client.verify_write_access()
         all_files = client.list_files(".")
         candidates: list[str] = []
         for path in all_files:

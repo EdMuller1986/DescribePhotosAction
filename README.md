@@ -92,13 +92,80 @@ When tracking is enabled, video JSON contains `track_id` values and a `tracks` s
 
 ## Google Drive workflow
 
-### Required secret
+### Required secrets
+
+Use **OAuth** for a regular My Drive folder (recommended):
+
+| Secret | Meaning |
+|---|---|
+| `GOOGLE_DRIVE_OAUTH_CREDENTIALS` | JSON with `client_id`, `client_secret`, `refresh_token` |
+
+Or use a **service account** only for Shared Drive / Google Workspace folders:
 
 | Secret | Meaning |
 |---|---|
 | `GOOGLE_DRIVE_CREDENTIALS` | Service account JSON key with Drive API access |
 
-Share the target Google Drive folder with the service account email from that JSON (`client_email`).
+Service accounts can read a shared My Drive folder, but Google Drive returns `403 insufficientParentPermissions` when creating result files there. For My Drive, configure OAuth instead.
+
+### OAuth setup via Google Cloud Shell (no local Python)
+
+#### 1. Google Cloud Console
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and select your project.
+2. **APIs & Services → Library** → enable **Google Drive API**.
+3. **APIs & Services → OAuth consent screen**
+   - User type: **External** (or Internal for Workspace)
+   - Add scope: `https://www.googleapis.com/auth/drive`
+   - **Test users** → add the Google account that owns the Drive folder
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type: **Desktop app**
+   - Copy `client_id` and `client_secret`
+
+#### 2. Cloud Shell
+
+1. Open [shell.cloud.google.com](https://shell.cloud.google.com/)
+2. Clone this repository (or upload only `scripts/get_gdrive_oauth_token.py`):
+
+```bash
+git clone https://github.com/EdMuller1986/DescribePhotosAction.git
+cd DescribePhotosAction
+pip install google-auth-oauthlib
+python scripts/get_gdrive_oauth_token.py
+```
+
+3. The script prints an authorization URL. Open it in your browser.
+4. Sign in with the Google account that owns the Drive folder and click **Allow**.
+5. The browser redirects to `http://localhost/?code=...` and shows a connection error. That is expected.
+6. Copy the **full URL** from the address bar (or only the `code` value) and paste it back into Cloud Shell.
+7. The script prints JSON like this:
+
+```json
+{
+  "client_id": "123.apps.googleusercontent.com",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "refresh_token": "YOUR_REFRESH_TOKEN"
+}
+```
+
+#### 3. GitHub secret
+
+1. Repository → **Settings → Secrets and variables → Actions → New repository secret**
+2. Name: `GOOGLE_DRIVE_OAUTH_CREDENTIALS`
+3. Value: the full JSON from step 2.7
+
+After that, run **Analyze Google Drive media with local YOLO**. The log should contain:
+
+```text
+auth: Google Drive OAuth user credentials
+write check: ok
+```
+
+If `refresh_token` is empty, revoke the app at [myaccount.google.com/permissions](https://myaccount.google.com/permissions) and run the script again.
+
+### Service account alternative (Shared Drive only)
+
+For service accounts, share the target Shared Drive folder with the service account email from JSON (`client_email`) as **Content manager**. Service accounts cannot write results into a regular My Drive folder.
 
 ### Manual run
 
