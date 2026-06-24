@@ -1,0 +1,87 @@
+name: Surveillance day summary from Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_url:
+        description: 'Google Drive folder URL with the daily video'
+        required: true
+        type: string
+      video_name:
+        description: 'Daily video filename in that folder (e.g. 20260622.mkv)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  summarize:
+    name: Build surveillance day summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_OAUTH_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_OAUTH_CREDENTIALS }}
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_ID }}
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET }}
+      GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN }}
+      SURVEILLANCE_CONFIG_PATH: config/surveillance.example.json
+      SURVEILLANCE_VIDEO_NAME: ${{ inputs.video_name }}
+
+    steps:
+      - name: Delete previous workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT="${{ github.run_id }}"
+          gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow analyze-surveillance-gdrive.yml \
+            --limit 200 \
+            --json databaseId \
+            --jq ".[] | select(.databaseId != ${CURRENT}) | .databaseId" | \
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            gh run delete "$run_id" --repo "${{ github.repository }}" || true
+          done
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse folder ID from input
+        id: parse
+        run: |
+          INPUT="${{ inputs.drive_url }}"
+          if [[ "$INPUT" =~ drive\.google\.com/.*/folders/([A-Za-z0-9_-]+) ]]; then
+            FOLDER_ID="${BASH_REMATCH[1]}"
+          elif [[ "$INPUT" =~ drive\.google\.com/file/d/([A-Za-z0-9_-]+) ]]; then
+            FOLDER_ID="${BASH_REMATCH[1]}"
+          elif [[ "$INPUT" =~ \?id=([A-Za-z0-9_-]+) ]]; then
+            FOLDER_ID="${BASH_REMATCH[1]}"
+          elif [[ "$INPUT" =~ ^[A-Za-z0-9_-]+$ ]] && [ ${#INPUT} -ge 20 ]; then
+            FOLDER_ID="$INPUT"
+          else
+            echo "ERROR: cannot parse Google Drive folder URL or ID from: $INPUT"
+            exit 1
+          fi
+          echo "folder_id=${FOLDER_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Analyze surveillance video on Google Drive
+        env:
+          GDRIVE_FOLDER_ID: ${{ steps.parse.outputs.folder_id }}
+        run: |
+          python scripts/analyze_surveillance_gdrive.py
