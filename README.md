@@ -187,3 +187,55 @@ The workflow uses the same processing variables as the FTP workflow.
 ## Manual run (FTP)
 
 Open GitHub Actions, select **Analyze FTP media with local YOLO**, and click **Run workflow**.
+
+## Surveillance day summary
+
+### Day/night detection
+
+Dawn and dusk are detected from the camera itself: **night = IR/grayscale**, **day = color**.
+The script samples frames across the video and finds the first sustained color segment (dawn)
+and the last color segment before night mode (dusk). No GPS coordinates required.
+
+### Local calibration (debug)
+
+```bash
+python scripts/calibrate_surveillance.py \
+  --reference-image /path/to/dayframe.jpg \
+  --output-dir /path/to/config \
+  --input-dir /path/to/videos
+
+python scripts/test_day_night.py --images-glob "/path/to/*.jpg"
+python scripts/test_day_night.py --video "/path/to/night.mkv" --sample-interval-sec 5
+```
+
+This writes `ignore_mask.png`, `zones_preview.jpg` and `surveillance.json`.
+
+### Local processing
+
+```bash
+python scripts/analyze_surveillance_day.py \
+  --video /path/to/20260622.mkv \
+  --config /path/to/surveillance.json
+```
+
+Pipeline:
+
+1. **Day/night** — camera color mode transitions.
+2. **Motion filter** — MOG2 + wind/laundry rejection; `ignore_mask.png` masks left foliage.
+3. **YOLO** — only on motion segments.
+4. **Events** — road traffic, bicycle, person, herd, gate, boarding, departure/return.
+
+Outputs:
+
+```text
+20260622.summary.json
+20260622.summary.txt
+```
+
+### GitHub Actions (production)
+
+Workflow **Surveillance day summary from Google Drive**:
+
+- input: folder URL + daily filename (`20260622.mkv`)
+- downloads the video via Drive API, runs the pipeline, uploads `.summary.json` and `.summary.txt` back to the same folder
+- uses `config/surveillance.example.json` from the repository (copy tuned config there before production runs)

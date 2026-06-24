@@ -1,0 +1,8 @@
+---
+pid: 17720
+cwd: "C:\Users\Gedonist\Documents\GitHub\DescribePhotosAction"
+command: "Get-ChildItem -Path \"C:\\Users\\Gedonist\\AppData\\Local\\Programs\\Python\",\"C:\\Python*\",\"C:\\Program Files\\Python*\" -Recurse -Filter python.exe -ErrorAction SilentlyContinue | Select-Object -First 5 FullName"
+started_at: 2026-06-24T09:13:19.777Z
+running_for_ms: 299997   
+---
+

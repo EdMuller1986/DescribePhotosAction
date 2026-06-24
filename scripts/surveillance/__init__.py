@@ -1,0 +1,1 @@
+"""Surveillance day-summary pipeline: motion filter, YOLO, event timeline."""
