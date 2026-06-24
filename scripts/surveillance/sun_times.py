@@ -6,10 +6,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from astral import LocationInfo
-from astral.sun import sun
-
-
 @dataclass(frozen=True)
 class SunTimes:
     date: str
@@ -26,6 +22,9 @@ def compute_sun_times(
     longitude: float,
     timezone_name: str,
 ) -> SunTimes:
+    from astral import LocationInfo
+    from astral.sun import sun
+
     tz = ZoneInfo(timezone_name)
     location = LocationInfo(
         name="camera",
@@ -54,21 +53,3 @@ def compute_sun_times(
     )
 
 
-def parse_video_day(video_path: str, fallback: date | None = None) -> date:
-    import os
-    import re
-
-    name = os.path.basename(video_path)
-    for pattern in (
-        re.compile(r"(20\d{2})(\d{2})(\d{2})"),
-        re.compile(r"(20\d{2})-(\d{2})-(\d{2})"),
-        re.compile(r"(20\d{2})_(\d{2})_(\d{2})"),
-    ):
-        match = pattern.search(name)
-        if match:
-            y, m, d = (int(match.group(i)) for i in range(1, 4))
-            return date(y, m, d)
-    if fallback:
-        return fallback
-    mtime = os.path.getmtime(video_path)
-    return datetime.fromtimestamp(mtime).date()

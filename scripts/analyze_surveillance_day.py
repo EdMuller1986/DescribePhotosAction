@@ -26,7 +26,7 @@ from surveillance.motion_detector import MotionDetectorConfig, MotionSegment, fi
 from surveillance.roi import NormalizedBox
 from surveillance.day_night import detect_day_night_from_video
 from surveillance.summary import build_summary_json, build_summary_text
-from surveillance.sun_times import parse_video_day
+from surveillance.video_day import parse_video_day
 
 
 def load_config(path: str) -> dict[str, Any]:
