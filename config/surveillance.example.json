@@ -1,7 +1,7 @@
 {
-  "_comment": "Template only. Production surveillance.json and ignore_mask.png live on Google Drive in the config/ subfolder.",
-  "gdrive_config_dir": "config",
-  "ignore_mask_file": "ignore_mask.png",
+  "input_dir": "/home/gedonist/gdrive/camera",
+  "output_dir": "/home/gedonist/gdrive/camera/summaries",
+  "ignore_mask_path": "/home/gedonist/gdrive/camera/config/ignore_mask.png",
   "day_night_method": "camera_color_mode",
   "day_night_sample_interval_sec": 60,
   "local_model_path": "yolo11n.pt",
@@ -9,15 +9,7 @@
   "yolo_device": "cpu",
   "video_frame_interval_seconds": 1.0,
   "zones": {
-    "road": {
-      "type": "polygon",
-      "points": [
-        [0.00, 0.36],
-        [0.58, 0.40],
-        [0.78, 0.26],
-        [0.02, 0.26]
-      ]
-    },
+    "road": { "x_min": 0.00, "y_min": 0.28, "x_max": 0.72, "y_max": 0.50 },
     "gate": { "x_min": 0.36, "y_min": 0.38, "x_max": 0.58, "y_max": 0.52 },
     "property": { "x_min": 0.12, "y_min": 0.48, "x_max": 0.98, "y_max": 0.98 }
   },

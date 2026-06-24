@@ -196,25 +196,27 @@ Dawn and dusk are detected from the camera itself: **night = IR/grayscale**, **d
 The script samples frames across the video and finds the first sustained color segment (dawn)
 and the last color segment before night mode (dusk). No GPS coordinates required.
 
-### Calibration on Google Drive
+### Local calibration (debug)
 
-Camera photos, masks and production config are **not** stored in this public repository.
+```bash
+python scripts/calibrate_surveillance.py \
+  --reference-image /path/to/dayframe.jpg \
+  --output-dir /path/to/config \
+  --input-dir /path/to/videos
 
-**First run** — upload a daytime reference photo to the camera folder on Drive, then run workflow **Calibrate surveillance from Google Drive** (folder URL only). The workflow writes:
-
-```text
-camera-folder/
-  reference_day.jpg          # your input photo (any JPG in folder root)
-  20260624.mkv
-  config/
-    surveillance.json
-    ignore_mask.png
-    reference_day.jpg
-    zones_preview.jpg
+python scripts/test_day_night.py --images-glob "/path/to/*.jpg"
+python scripts/test_day_night.py --video "/path/to/night.mkv" --sample-interval-sec 5
 ```
 
-See `config/surveillance/README.txt` and `config/surveillance.example.json` for the JSON template.
-Zones can be rectangles (`x_min`…`y_max`) or polygons (`points`: `[[x,y], …]` normalized 0..1).
+This writes `ignore_mask.png`, `zones_preview.jpg` and `surveillance.json`.
+
+### Local processing
+
+```bash
+python scripts/analyze_surveillance_day.py \
+  --video /path/to/20260622.mkv \
+  --config /path/to/surveillance.json
+```
 
 Pipeline:
 
@@ -232,14 +234,8 @@ Outputs:
 
 ### GitHub Actions (production)
 
-Workflow **Calibrate surveillance from Google Drive**:
-
-- input: folder URL
-- finds a reference JPG/PNG in the folder root, builds mask/zones/config, uploads to `config/` on Drive
-
 Workflow **Surveillance day summary from Google Drive**:
 
-- input: folder URL only (like the YOLO Drive workflow)
-- downloads `config/surveillance.json` and `config/ignore_mask.png` from Drive
-- processes every video in the folder that does not yet have a sibling `.summary.json`
-- uploads `.summary.json` and `.summary.txt` next to each video
+- input: folder URL + daily filename (`20260622.mkv`)
+- downloads the video via Drive API, runs the pipeline, uploads `.summary.json` and `.summary.txt` back to the same folder
+- uses `config/surveillance.example.json` from the repository (copy tuned config there before production runs)

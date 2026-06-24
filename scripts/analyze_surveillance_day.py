@@ -23,7 +23,7 @@ from ultralytics import YOLO
 from analyze_ftp_photos import Settings, extract_detections, run_video_frame
 from surveillance.events import infer_events
 from surveillance.motion_detector import MotionDetectorConfig, MotionSegment, find_motion_segments
-from surveillance.roi import Zone, parse_zone
+from surveillance.roi import NormalizedBox
 from surveillance.day_night import detect_day_night_from_video
 from surveillance.summary import build_summary_json, build_summary_text
 from surveillance.sun_times import parse_video_day
@@ -34,8 +34,16 @@ def load_config(path: str) -> dict[str, Any]:
         return json.load(f)
 
 
-def load_zones(config: dict[str, Any]) -> dict[str, Zone]:
-    return {name: parse_zone(raw) for name, raw in (config.get("zones") or {}).items()}
+def load_zones(config: dict[str, Any]) -> dict[str, NormalizedBox]:
+    zones: dict[str, NormalizedBox] = {}
+    for name, raw in (config.get("zones") or {}).items():
+        zones[name] = NormalizedBox(
+            x_min=float(raw["x_min"]),
+            y_min=float(raw["y_min"]),
+            x_max=float(raw["x_max"]),
+            y_max=float(raw["y_max"]),
+        )
+    return zones
 
 
 def motion_config_from_json(raw: dict[str, Any] | None) -> MotionDetectorConfig:
@@ -190,10 +198,6 @@ def main() -> int:
     zones = load_zones(config)
     motion_cfg = motion_config_from_json(config.get("motion"))
     ignore_mask = args.ignore_mask or config.get("ignore_mask_path")
-    if not ignore_mask:
-        mask_file = config.get("ignore_mask_file")
-        if mask_file:
-            ignore_mask = str(Path(args.config).resolve().parent / mask_file)
     day_night_interval = float(config.get("day_night_sample_interval_sec", 60))
 
     print(f"video: {video_path}")

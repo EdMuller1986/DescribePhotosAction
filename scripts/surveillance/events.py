@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from surveillance.roi import Zone, zone_hits
+from surveillance.roi import NormalizedBox, zone_hits
 
 VEHICLE_LABELS = {"car", "truck", "bus", "motorcycle"}
 BICYCLE_LABELS = {"bicycle"}
@@ -50,7 +50,7 @@ def _fmt_clock(seconds: float) -> str:
 
 def collect_track_observations(
     frames: list[dict[str, Any]],
-    zones: dict[str, Zone],
+    zones: dict[str, NormalizedBox],
 ) -> dict[int, list[TrackObservation]]:
     by_track: dict[int, list[TrackObservation]] = defaultdict(list)
     for frame in frames:
@@ -82,7 +82,7 @@ def _zone_span(observations: list[TrackObservation], zone_name: str) -> tuple[fl
 
 def infer_events(
     frames: list[dict[str, Any]],
-    zones: dict[str, Zone],
+    zones: dict[str, NormalizedBox],
     day_start_offset_sec: float = 0.0,
 ) -> list[SurveillanceEvent]:
     tracks = collect_track_observations(frames, zones)
