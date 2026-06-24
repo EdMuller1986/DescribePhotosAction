@@ -4,11 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       drive_url:
-        description: 'Google Drive folder URL with the daily video'
-        required: true
-        type: string
-      video_name:
-        description: 'Daily video filename in that folder (e.g. 20260622.mkv)'
+        description: 'Google Drive folder URL with surveillance videos'
         required: true
         type: string
 
@@ -28,8 +24,9 @@ jobs:
       GOOGLE_DRIVE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_ID }}
       GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET }}
       GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN }}
-      SURVEILLANCE_CONFIG_PATH: config/surveillance.example.json
-      SURVEILLANCE_VIDEO_NAME: ${{ inputs.video_name }}
+      SURVEILLANCE_GDRIVE_CONFIG_DIR: config
+      SURVEILLANCE_GDRIVE_CONFIG_FILE: surveillance.json
+      SURVEILLANCE_GDRIVE_MASK_FILE: ignore_mask.png
 
     steps:
       - name: Delete previous workflow runs
@@ -80,7 +77,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Analyze surveillance video on Google Drive
+      - name: Analyze surveillance videos on Google Drive
         env:
           GDRIVE_FOLDER_ID: ${{ steps.parse.outputs.folder_id }}
         run: |
