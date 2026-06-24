@@ -57,6 +57,21 @@ def _owner_emails(meta: dict[str, Any]) -> list[str]:
     return [str(owner.get("emailAddress", "")) for owner in owners if owner.get("emailAddress")]
 
 
+def _owner_account_match(auth_email: str, owner_emails: list[str]) -> bool | None:
+    if not auth_email or auth_email in {"unknown", "service-account"}:
+        return None
+    auth = auth_email.strip().lower()
+    return any(owner.strip().lower() == auth for owner in owner_emails)
+
+
+def _owner_match_label(match: bool | None) -> str:
+    if match is True:
+        return "соответствует"
+    if match is False:
+        return "не соответствует"
+    return "н/д"
+
+
 @dataclass(frozen=True)
 class GDriveSettings:
     folder_id: str
@@ -134,8 +149,7 @@ def build_drive_credentials() -> tuple[Any, str]:
     credentials_json = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "").strip()
     if credentials_json:
         info = json.loads(credentials_json)
-        email = info.get("client_email", "")
-        print(f"auth: Google Drive service account {email}")
+        print("auth: Google Drive service account")
         return (
             service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES),
             "service_account",
@@ -243,29 +257,35 @@ class GDriveClient(RemoteClient):
             .execute()
         )
         capabilities = meta.get("capabilities") or {}
+        owner_emails = _owner_emails(meta)
+        auth_email = self.authenticated_identity()
+        owner_match = _owner_account_match(auth_email, owner_emails)
         return {
             "folder_id": meta.get("id"),
             "folder_name": meta.get("name"),
             "shared": meta.get("shared"),
             "drive_id": meta.get("driveId"),
-            "owners": _owner_emails(meta),
+            "owner_account_match": owner_match,
+            "owner_account_match_label": _owner_match_label(owner_match),
             "can_add_children": capabilities.get("canAddChildren"),
             "can_edit": capabilities.get("canEdit"),
         }
 
     def write_denied_help(self) -> str:
-        identity = self.authenticated_identity()
         report = self.folder_access_report()
-        owners = ", ".join(report["owners"]) or "unknown"
         lines = [
             "Google Drive write access denied for the target folder.",
-            f"Authenticated as: {identity}",
-            f"Folder: {report['folder_name']!r} ({report['folder_id']})",
-            f"Owners: {owners}",
+            f"Folder: {report['folder_name']!r}",
+            f"owner account match: {report['owner_account_match_label']}",
             f"canAddChildren: {report['can_add_children']}",
             f"canEdit: {report['can_edit']}",
         ]
         if self.auth_mode == "oauth":
+            if report["owner_account_match"] is False:
+                lines.append(
+                    "OAuth account is not the folder owner. Sign in with the owner account "
+                    "or grant Editor access to the OAuth account."
+                )
             lines.extend(
                 [
                     "",
@@ -394,8 +414,7 @@ class GDriveClient(RemoteClient):
         print(
             "folder access: "
             f"name={report['folder_name']!r} "
-            f"auth={self.authenticated_identity()} "
-            f"owners={report['owners']} "
+            f"owner_account_match={report['owner_account_match_label']} "
             f"canAddChildren={report['can_add_children']}"
         )
         if report["can_add_children"] is False:

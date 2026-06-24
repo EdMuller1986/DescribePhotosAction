@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   analyze:
@@ -53,6 +54,22 @@ jobs:
       FAIL_ON_ERRORS: ${{ vars.FAIL_ON_ERRORS || 'false' }}
 
     steps:
+      - name: Delete previous workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT="${{ github.run_id }}"
+          gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow analyze-gdrive-photos.yml \
+            --limit 200 \
+            --json databaseId \
+            --jq ".[] | select(.databaseId != ${CURRENT}) | .databaseId" | \
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            gh run delete "$run_id" --repo "${{ github.repository }}" || true
+          done
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
