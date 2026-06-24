@@ -57,10 +57,13 @@ jobs:
         run: |
           INPUT="${{ inputs.drive_url }}"
 
-          if [[ "$INPUT" =~ drive\.google\.com/(drive/(u/[0-9]+/)?folders|file/d)/([A-Za-z0-9_-]+) ]]; then
-            FOLDER_ID="${BASH_REMATCH[3]}"
-            echo "Detected Google Drive folder/file URL, ID: $FOLDER_ID"
-          elif [[ "$INPUT" =~ [?&]id=([A-Za-z0-9_-]+) ]]; then
+          if [[ "$INPUT" =~ drive\.google\.com/.*/folders/([A-Za-z0-9_-]+) ]]; then
+            FOLDER_ID="${BASH_REMATCH[1]}"
+            echo "Detected Google Drive folder URL, ID: $FOLDER_ID"
+          elif [[ "$INPUT" =~ drive\.google\.com/file/d/([A-Za-z0-9_-]+) ]]; then
+            FOLDER_ID="${BASH_REMATCH[1]}"
+            echo "Detected Google Drive file URL, ID: $FOLDER_ID"
+          elif [[ "$INPUT" =~ \?id=([A-Za-z0-9_-]+) ]]; then
             FOLDER_ID="${BASH_REMATCH[1]}"
             echo "Detected Google Drive open URL, ID: $FOLDER_ID"
           elif [[ "$INPUT" =~ ^[A-Za-z0-9_-]+$ ]] && [ ${#INPUT} -ge 20 ]; then
