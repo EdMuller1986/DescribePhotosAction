@@ -23,7 +23,7 @@ from ultralytics import YOLO
 from analyze_ftp_photos import Settings, extract_detections, run_video_frame
 from surveillance.events import infer_events
 from surveillance.motion_detector import MotionDetectorConfig, MotionSegment, find_motion_segments
-from surveillance.roi import NormalizedBox
+from surveillance.roi import Zone
 from surveillance.day_night import detect_day_night_from_video
 from surveillance.summary import build_summary_json, build_summary_text
 from surveillance.video_day import parse_video_day
@@ -34,15 +34,10 @@ def load_config(path: str) -> dict[str, Any]:
         return json.load(f)
 
 
-def load_zones(config: dict[str, Any]) -> dict[str, NormalizedBox]:
-    zones: dict[str, NormalizedBox] = {}
+def load_zones(config: dict[str, Any]) -> dict[str, Zone]:
+    zones: dict[str, Zone] = {}
     for name, raw in (config.get("zones") or {}).items():
-        zones[name] = NormalizedBox(
-            x_min=float(raw["x_min"]),
-            y_min=float(raw["y_min"]),
-            x_max=float(raw["x_max"]),
-            y_max=float(raw["y_max"]),
-        )
+        zones[name] = Zone.from_config(raw)
     return zones
 
 
