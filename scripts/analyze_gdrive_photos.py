@@ -52,20 +52,16 @@ _FOLDER_ID_PATTERNS = (
     re.compile(r"^([A-Za-z0-9_-]{20,})$"),
 )
 
-_WRITE_DENIED_HELP = (
-    "Google Drive write access denied. Service accounts can read shared My Drive "
-    "folders but cannot create files there. Use one of these options:\n"
-    "1) Add GOOGLE_DRIVE_OAUTH_CREDENTIALS with client_id, client_secret and "
-    "refresh_token for the Google account that owns the folder.\n"
-    "2) Move media to a Shared Drive and grant the service account Content manager "
-    "access."
-)
+def _owner_emails(meta: dict[str, Any]) -> list[str]:
+    owners = meta.get("owners") or []
+    return [str(owner.get("emailAddress", "")) for owner in owners if owner.get("emailAddress")]
 
 
 @dataclass(frozen=True)
 class GDriveSettings:
     folder_id: str
     credentials: Any
+    auth_mode: str
     model_path: str
     yolo_confidence: float
     yolo_iou: float
@@ -120,7 +116,7 @@ def _oauth_parts() -> tuple[str, str, str]:
     return refresh_token, client_id, client_secret
 
 
-def build_drive_credentials() -> Any:
+def build_drive_credentials() -> tuple[Any, str]:
     refresh_token, client_id, client_secret = _oauth_parts()
     if refresh_token and client_id and client_secret:
         creds = Credentials(
@@ -133,13 +129,17 @@ def build_drive_credentials() -> Any:
         )
         creds.refresh(Request())
         print("auth: Google Drive OAuth user credentials")
-        return creds
+        return creds, "oauth"
 
     credentials_json = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "").strip()
     if credentials_json:
         info = json.loads(credentials_json)
-        print(f"auth: Google Drive service account {info.get('client_email', '')}")
-        return service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+        email = info.get("client_email", "")
+        print(f"auth: Google Drive service account {email}")
+        return (
+            service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES),
+            "service_account",
+        )
 
     raise RuntimeError(
         "Google Drive auth is required. Set GOOGLE_DRIVE_OAUTH_CREDENTIALS "
@@ -148,7 +148,7 @@ def build_drive_credentials() -> Any:
 
 
 def load_settings() -> GDriveSettings:
-    credentials = build_drive_credentials()
+    credentials, auth_mode = build_drive_credentials()
 
     folder_raw = os.getenv("GDRIVE_FOLDER_ID", "").strip() or os.getenv("GDRIVE_URL", "").strip()
     folder_id = parse_folder_id(folder_raw)
@@ -162,6 +162,7 @@ def load_settings() -> GDriveSettings:
     return GDriveSettings(
         folder_id=folder_id,
         credentials=credentials,
+        auth_mode=auth_mode,
         model_path=os.getenv("LOCAL_MODEL_PATH", "yolo11n.pt").strip() or "yolo11n.pt",
         yolo_confidence=env_float("YOLO_CONFIDENCE", 0.25),
         yolo_iou=env_float("YOLO_IOU", 0.70),
@@ -189,12 +190,103 @@ def load_settings() -> GDriveSettings:
 
 
 class GDriveClient(RemoteClient):
-    def __init__(self, folder_id: str, credentials: Any) -> None:
+    def __init__(self, folder_id: str, credentials: Any, auth_mode: str) -> None:
         self.service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        self.auth_mode = auth_mode
         self.root_folder_id = folder_id
         self._files_by_path: dict[str, dict[str, str]] = {}
         self._folder_ids_by_path: dict[str, str] = {"": folder_id, ".": folder_id}
         self._flat_upload_prefixes: set[str] = set()
+
+    def authenticated_identity(self) -> str:
+        if self.auth_mode == "oauth":
+            about = self.service.about().get(fields="user/emailAddress").execute()
+            return str(about.get("user", {}).get("emailAddress", "unknown"))
+        info = getattr(self.service._http.credentials, "service_account_email", None)
+        return str(info or "service-account")
+
+    def resolve_target_folder_id(self) -> str:
+        meta = (
+            self.service.files()
+            .get(
+                fileId=self.root_folder_id,
+                fields="id,name,mimeType,shortcutDetails",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        mime = meta.get("mimeType", "")
+        if mime == FOLDER_MIME:
+            return self.root_folder_id
+        shortcut = meta.get("shortcutDetails") or {}
+        target_id = shortcut.get("targetId")
+        target_mime = shortcut.get("targetMimeType", "")
+        if target_id and target_mime == FOLDER_MIME:
+            print(f"target folder is a shortcut, using targetId: {target_id}")
+            self.root_folder_id = target_id
+            self._folder_ids_by_path[""] = target_id
+            self._folder_ids_by_path["."] = target_id
+            return target_id
+        raise RuntimeError(
+            f"Target {self.root_folder_id!r} is not a folder (mimeType={mime!r}). "
+            "Pass a Google Drive folder URL, not a file URL."
+        )
+
+    def folder_access_report(self) -> dict[str, Any]:
+        meta = (
+            self.service.files()
+            .get(
+                fileId=self.root_folder_id,
+                fields="id,name,mimeType,owners,shared,capabilities,driveId",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        capabilities = meta.get("capabilities") or {}
+        return {
+            "folder_id": meta.get("id"),
+            "folder_name": meta.get("name"),
+            "shared": meta.get("shared"),
+            "drive_id": meta.get("driveId"),
+            "owners": _owner_emails(meta),
+            "can_add_children": capabilities.get("canAddChildren"),
+            "can_edit": capabilities.get("canEdit"),
+        }
+
+    def write_denied_help(self) -> str:
+        identity = self.authenticated_identity()
+        report = self.folder_access_report()
+        owners = ", ".join(report["owners"]) or "unknown"
+        lines = [
+            "Google Drive write access denied for the target folder.",
+            f"Authenticated as: {identity}",
+            f"Folder: {report['folder_name']!r} ({report['folder_id']})",
+            f"Owners: {owners}",
+            f"canAddChildren: {report['can_add_children']}",
+            f"canEdit: {report['can_edit']}",
+        ]
+        if self.auth_mode == "oauth":
+            lines.extend(
+                [
+                    "",
+                    "OAuth is configured, but this Google account cannot create files in that folder.",
+                    "Fix options:",
+                    "1) Run get_gdrive_oauth_token.py again and sign in with the folder owner account.",
+                    "2) In Google Drive, share the folder with the OAuth account as Editor.",
+                    "3) Do not use a public Viewer link only; API write needs Editor rights.",
+                    "4) If the folder is on a Shared Drive, grant that account at least Content manager.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "Service accounts cannot write into a regular My Drive folder.",
+                    "Use OAuth for My Drive, or move media to a Shared Drive and grant the",
+                    "service account Content manager access.",
+                ]
+            )
+        return "\n".join(lines)
 
     def _list_children(self, folder_id: str) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
@@ -297,6 +389,18 @@ class GDriveClient(RemoteClient):
         return parent_id, name
 
     def verify_write_access(self) -> None:
+        self.resolve_target_folder_id()
+        report = self.folder_access_report()
+        print(
+            "folder access: "
+            f"name={report['folder_name']!r} "
+            f"auth={self.authenticated_identity()} "
+            f"owners={report['owners']} "
+            f"canAddChildren={report['can_add_children']}"
+        )
+        if report["can_add_children"] is False:
+            raise RuntimeError(self.write_denied_help())
+
         test_name = ".describe-photos-action-write-test"
         media = MediaIoBaseUpload(io.BytesIO(b"ok"), mimetype="text/plain", resumable=False)
         created_id = None
@@ -315,7 +419,7 @@ class GDriveClient(RemoteClient):
             print("write check: ok")
         except HttpError as exc:
             if exc.resp.status == 403:
-                raise RuntimeError(_WRITE_DENIED_HELP) from exc
+                raise RuntimeError(self.write_denied_help()) from exc
             raise
         finally:
             if created_id:
@@ -418,7 +522,7 @@ class GDriveClient(RemoteClient):
             }
         except HttpError as exc:
             if exc.resp.status == 403:
-                raise RuntimeError(_WRITE_DENIED_HELP) from exc
+                raise RuntimeError(self.write_denied_help()) from exc
             raise
 
 
@@ -460,7 +564,7 @@ def to_ftp_settings(settings: GDriveSettings):
 
 def run() -> int:
     settings = load_settings()
-    client = GDriveClient(settings.folder_id, settings.credentials)
+    client = GDriveClient(settings.folder_id, settings.credentials, settings.auth_mode)
     ftp_settings = to_ftp_settings(settings)
     processed = 0
     errors = 0
