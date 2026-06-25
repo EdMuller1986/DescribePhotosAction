@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from surveillance.video_io import advance_frame, log_scan_progress, video_stats
+
 
 @dataclass(frozen=True)
 class DayNightTimes:
@@ -76,22 +78,32 @@ def detect_day_night_from_video(
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    fps, total_frames = video_stats(cap)
     duration_sec = total_frames / fps if total_frames > 0 else 0.0
     step = max(1, int(round(fps * max(sample_interval_sec, 5.0))))
 
     sample_times: list[float] = []
     sample_night: list[bool] = []
     frame_index = 0
+    last_logged_pct = -1
     while True:
-        ok, frame = cap.read()
+        if total_frames > 0 and frame_index >= total_frames:
+            break
+        decode = frame_index % step == 0
+        ok, frame = advance_frame(cap, frame_index, decode=decode)
         if not ok:
             break
-        if frame_index % step == 0:
+        if decode and frame is not None:
             ts = frame_index / fps
             sample_times.append(ts)
             sample_night.append(is_night_frame(frame))
+        last_logged_pct = log_scan_progress(
+            "day_night scan",
+            frame_index + 1,
+            total_frames,
+            fps,
+            last_logged_pct=last_logged_pct,
+        )
         frame_index += 1
     cap.release()
 

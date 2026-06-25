@@ -72,8 +72,10 @@ def _process_video(
             "--output-dir",
             output_dir,
         ]
-        print("run:", " ".join(cmd))
-        subprocess.run(cmd, check=True)
+        print("run:", " ".join(cmd), flush=True)
+        child_env = os.environ.copy()
+        child_env["PYTHONUNBUFFERED"] = "1"
+        subprocess.run(cmd, check=True, env=child_env)
 
         stem = Path(remote_video).stem
         for ext in (".summary.json", ".summary.txt"):

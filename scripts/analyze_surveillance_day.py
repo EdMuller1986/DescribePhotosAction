@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-from ultralytics import YOLO
 
 from analyze_ftp_photos import Settings, extract_detections, run_video_frame
 from surveillance.events import infer_events
@@ -27,6 +26,7 @@ from surveillance.roi import Zone
 from surveillance.day_night import detect_day_night_from_video
 from surveillance.summary import build_summary_json, build_summary_text
 from surveillance.video_day import parse_video_day
+from surveillance.video_io import advance_frame, format_duration, log_scan_progress, video_stats
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -93,7 +93,7 @@ def yolo_settings_from_config(config: dict[str, Any]) -> Settings:
 
 def analyze_motion_segments(
     video_path: str,
-    model: YOLO,
+    model: Any,
     segments: list[MotionSegment],
     settings: Settings,
 ) -> list[dict[str, Any]]:
@@ -101,10 +101,11 @@ def analyze_motion_segments(
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 25.0
+    fps, total_frames = video_stats(cap)
     frame_step = max(1, int(round(fps * max(settings.video_frame_interval_seconds, 0.1))))
     frames_out: list[dict[str, Any]] = []
     frame_index = 0
+    last_logged_pct = -1
 
     try:
         model.predictor = None
@@ -112,10 +113,20 @@ def analyze_motion_segments(
         pass
 
     while True:
-        ok, frame_bgr = cap.read()
+        if total_frames > 0 and frame_index >= total_frames:
+            break
+        analyze = frame_index % frame_step == 0 and frame_in_segments(frame_index, segments)
+        ok, frame_bgr = advance_frame(cap, frame_index, decode=analyze)
         if not ok:
             break
-        if frame_index % frame_step != 0 or not frame_in_segments(frame_index, segments):
+        if not analyze or frame_bgr is None:
+            last_logged_pct = log_scan_progress(
+                "yolo scan",
+                frame_index + 1,
+                total_frames,
+                fps,
+                last_logged_pct=last_logged_pct,
+            )
             frame_index += 1
             continue
 
@@ -131,6 +142,13 @@ def analyze_motion_segments(
                 "timestamp_sec": round(timestamp_sec, 3),
                 "detections": detections,
             }
+        )
+        last_logged_pct = log_scan_progress(
+            "yolo scan",
+            frame_index + 1,
+            total_frames,
+            fps,
+            last_logged_pct=last_logged_pct,
         )
         frame_index += 1
 
@@ -195,9 +213,21 @@ def main() -> int:
     ignore_mask = args.ignore_mask or config.get("ignore_mask_path")
     day_night_interval = float(config.get("day_night_sample_interval_sec", 60))
 
-    print(f"video: {video_path}")
-    print(f"day: {day.isoformat()}")
-    print("step 1/4: day/night from camera color mode")
+    cap_probe = cv2.VideoCapture(video_path)
+    if not cap_probe.isOpened():
+        raise SystemExit(f"Cannot open video: {video_path}")
+    fps, total_frames = video_stats(cap_probe)
+    cap_probe.release()
+    duration_sec = total_frames / fps if total_frames > 0 else 0.0
+
+    print(f"video: {video_path}", flush=True)
+    print(f"day: {day.isoformat()}", flush=True)
+    print(
+        f"duration: {format_duration(duration_sec)} "
+        f"({total_frames} frames @ {fps:.2f} fps)",
+        flush=True,
+    )
+    print("step 1/4: day/night from camera color mode", flush=True)
     day_night = detect_day_night_from_video(
         video_path,
         day_label=day.isoformat(),
@@ -209,7 +239,7 @@ def main() -> int:
         f"night_ratio={day_night.night_sample_ratio:.2f}"
     )
 
-    print("step 2/4: motion detection")
+    print("step 2/4: motion detection", flush=True)
     segments, motion_stats = find_motion_segments(video_path, motion_cfg, ignore_mask)
     print(
         "motion: "
@@ -219,8 +249,11 @@ def main() -> int:
     if not segments:
         print("warning: no motion segments after filtering", file=sys.stderr)
 
-    print("step 3/4: YOLO on motion segments")
+    print("step 3/4: YOLO on motion segments", flush=True)
     yolo_settings = yolo_settings_from_config(config)
+    from ultralytics import YOLO
+
+    print(f"loading model: {yolo_settings.model_path}", flush=True)
     model = YOLO(yolo_settings.model_path)
     frames = analyze_motion_segments(
         video_path=video_path,

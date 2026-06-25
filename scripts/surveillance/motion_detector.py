@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from surveillance.video_io import advance_frame, log_scan_progress, video_stats
+
 
 @dataclass(frozen=True)
 class MotionDetectorConfig:
@@ -147,7 +149,7 @@ def find_motion_segments(
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 25.0
+    fps, total_frames = video_stats(cap)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     ignore_mask = _load_ignore_mask(ignore_mask_path, width, height)
@@ -163,12 +165,23 @@ def find_motion_segments(
     frame_index = 0
     processed = 0
     rejected_wind = 0
+    last_logged_pct = -1
 
     while True:
-        ok, frame_bgr = cap.read()
+        if total_frames > 0 and frame_index >= total_frames:
+            break
+        decode = frame_index % cfg.sample_every_n_frames == 0
+        ok, frame_bgr = advance_frame(cap, frame_index, decode=decode)
         if not ok:
             break
-        if frame_index % cfg.sample_every_n_frames != 0:
+        if not decode or frame_bgr is None:
+            last_logged_pct = log_scan_progress(
+                "motion scan",
+                frame_index + 1,
+                total_frames,
+                fps,
+                last_logged_pct=last_logged_pct,
+            )
             frame_index += 1
             continue
 
@@ -223,6 +236,13 @@ def find_motion_segments(
             active_samples = []
 
         processed += 1
+        last_logged_pct = log_scan_progress(
+            "motion scan",
+            frame_index + 1,
+            total_frames,
+            fps,
+            last_logged_pct=last_logged_pct,
+        )
         frame_index += 1
 
     if active_samples:
