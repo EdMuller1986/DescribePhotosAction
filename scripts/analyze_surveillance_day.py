@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Daily surveillance summary: motion filter -> YOLO on segments -> event timeline.
 
+Day/night detection is intentionally not used (too slow on full-day videos).
+
 Example:
   python scripts/analyze_surveillance_day.py \
     --video /home/gedonist/gdrive/camera/20260622.mkv \
@@ -23,7 +25,6 @@ from analyze_ftp_photos import Settings, extract_detections, run_video_frame
 from surveillance.events import infer_events
 from surveillance.motion_detector import MotionDetectorConfig, MotionSegment, find_motion_segments
 from surveillance.roi import Zone
-from surveillance.day_night import detect_day_night_from_video
 from surveillance.summary import build_summary_json, build_summary_text
 from surveillance.video_day import parse_video_day
 from surveillance.video_io import advance_frame, format_duration, log_scan_progress, video_stats
@@ -97,6 +98,10 @@ def analyze_motion_segments(
     segments: list[MotionSegment],
     settings: Settings,
 ) -> list[dict[str, Any]]:
+    if not segments:
+        print("yolo: skipped (no motion segments)", flush=True)
+        return []
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -211,7 +216,10 @@ def main() -> int:
     zones = load_zones(config)
     motion_cfg = motion_config_from_json(config.get("motion"))
     ignore_mask = args.ignore_mask or config.get("ignore_mask_path")
-    day_night_interval = float(config.get("day_night_sample_interval_sec", 60))
+    if not ignore_mask:
+        mask_file = config.get("ignore_mask_file")
+        if mask_file:
+            ignore_mask = str(Path(args.config).resolve().parent / mask_file)
 
     cap_probe = cv2.VideoCapture(video_path)
     if not cap_probe.isOpened():
@@ -227,19 +235,7 @@ def main() -> int:
         f"({total_frames} frames @ {fps:.2f} fps)",
         flush=True,
     )
-    print("step 1/4: day/night from camera color mode", flush=True)
-    day_night = detect_day_night_from_video(
-        video_path,
-        day_label=day.isoformat(),
-        sample_interval_sec=day_night_interval,
-    )
-    print(
-        "day_night: "
-        f"dawn={day_night.dawn} dusk={day_night.dusk} "
-        f"night_ratio={day_night.night_sample_ratio:.2f}"
-    )
-
-    print("step 2/4: motion detection", flush=True)
+    print("step 1/3: motion detection", flush=True)
     segments, motion_stats = find_motion_segments(video_path, motion_cfg, ignore_mask)
     print(
         "motion: "
@@ -249,25 +245,29 @@ def main() -> int:
     if not segments:
         print("warning: no motion segments after filtering", file=sys.stderr)
 
-    print("step 3/4: YOLO on motion segments", flush=True)
-    yolo_settings = yolo_settings_from_config(config)
-    from ultralytics import YOLO
+    frames: list[dict[str, Any]] = []
+    if segments:
+        print("step 2/3: YOLO on motion segments", flush=True)
+        yolo_settings = yolo_settings_from_config(config)
+        from ultralytics import YOLO
 
-    print(f"loading model: {yolo_settings.model_path}", flush=True)
-    model = YOLO(yolo_settings.model_path)
-    frames = analyze_motion_segments(
-        video_path=video_path,
-        model=model,
-        segments=segments,
-        settings=yolo_settings,
-    )
-    print(f"yolo frames analyzed: {len(frames)}")
+        print(f"loading model: {yolo_settings.model_path}", flush=True)
+        model = YOLO(yolo_settings.model_path)
+        frames = analyze_motion_segments(
+            video_path=video_path,
+            model=model,
+            segments=segments,
+            settings=yolo_settings,
+        )
+        print(f"yolo frames analyzed: {len(frames)}", flush=True)
+    else:
+        print("step 2/3: YOLO skipped (no motion segments)", flush=True)
 
-    print("step 4/4: event inference and summary")
+    print("step 3/3: event inference and summary", flush=True)
     events = infer_events(frames, zones)
     summary_json = build_summary_json(
         video_path=video_path,
-        day_night=day_night,
+        day_label=day.isoformat(),
         events=events,
         motion_stats=motion_stats,
         segments=segments_to_json(segments),
@@ -279,12 +279,12 @@ def main() -> int:
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary_json, f, ensure_ascii=False, indent=2)
     with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(build_summary_text(day_night, events, motion_stats))
+        f.write(build_summary_text(day.isoformat(), events, motion_stats))
 
     print(f"written: {json_path}")
     print(f"written: {txt_path}")
     print()
-    print(build_summary_text(day_night, events, motion_stats))
+    print(build_summary_text(day.isoformat(), events, motion_stats), flush=True)
     return 0
 
 

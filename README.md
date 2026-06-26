@@ -190,25 +190,10 @@ Open GitHub Actions, select **Analyze FTP media with local YOLO**, and click **R
 
 ## Surveillance day summary
 
-### Day/night detection
+### Calibration on Google Drive
 
-Dawn and dusk are detected from the camera itself: **night = IR/grayscale**, **day = color**.
-The script samples frames across the video and finds the first sustained color segment (dawn)
-and the last color segment before night mode (dusk). No GPS coordinates required.
-
-### Local calibration (debug)
-
-```bash
-python scripts/calibrate_surveillance.py \
-  --reference-image /path/to/dayframe.jpg \
-  --output-dir /path/to/config \
-  --input-dir /path/to/videos
-
-python scripts/test_day_night.py --images-glob "/path/to/*.jpg"
-python scripts/test_day_night.py --video "/path/to/night.mkv" --sample-interval-sec 5
-```
-
-This writes `ignore_mask.png`, `zones_preview.jpg` and `surveillance.json`.
+Run workflow **Calibrate surveillance from Google Drive** with your camera folder URL.
+It writes `config/surveillance.json`, `ignore_mask.png` and preview images to Drive.
 
 ### Local processing
 
@@ -220,10 +205,9 @@ python scripts/analyze_surveillance_day.py \
 
 Pipeline:
 
-1. **Day/night** — camera color mode transitions.
-2. **Motion filter** — MOG2 + wind/laundry rejection; `ignore_mask.png` masks left foliage.
-3. **YOLO** — only on motion segments.
-4. **Events** — road traffic, bicycle, person, herd, gate, boarding, departure/return.
+1. **Motion filter** — MOG2 + wind/laundry rejection; `ignore_mask.png` masks left foliage.
+2. **YOLO** — only on motion segments (skipped when none found).
+3. **Events** — road traffic, bicycle, person, herd, gate, boarding, departure/return.
 
 Outputs:
 
@@ -236,6 +220,6 @@ Outputs:
 
 Workflow **Surveillance day summary from Google Drive**:
 
-- input: folder URL + daily filename (`20260622.mkv`)
-- downloads the video via Drive API, runs the pipeline, uploads `.summary.json` and `.summary.txt` back to the same folder
-- uses `config/surveillance.example.json` from the repository (copy tuned config there before production runs)
+- input: folder URL only
+- downloads `config/surveillance.json` from Drive, processes videos without `.summary.json`
+- uploads `.summary.json` and `.summary.txt` next to each video

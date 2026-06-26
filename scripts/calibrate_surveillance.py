@@ -78,8 +78,6 @@ def main() -> int:
         "input_dir": args.input_dir or str(image_path.parent),
         "output_dir": str(output_dir / "summaries"),
         "ignore_mask_path": str(mask_path),
-        "day_night_method": "camera_color_mode",
-        "day_night_sample_interval_sec": 60,
         "local_model_path": "yolo11n.pt",
         "yolo_confidence": 0.25,
         "yolo_device": "cpu",

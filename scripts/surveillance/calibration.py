@@ -88,8 +88,6 @@ def build_surveillance_config(
         "ignore_mask_file": ignore_mask_file,
         "input_dir": input_dir,
         "output_dir": "",
-        "day_night_method": "camera_color_mode",
-        "day_night_sample_interval_sec": 60,
         "local_model_path": "yolo11n.pt",
         "yolo_confidence": 0.25,
         "yolo_device": "cpu",

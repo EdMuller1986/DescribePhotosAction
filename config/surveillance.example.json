@@ -2,8 +2,6 @@
   "input_dir": "/home/gedonist/gdrive/camera",
   "output_dir": "/home/gedonist/gdrive/camera/summaries",
   "ignore_mask_path": "/home/gedonist/gdrive/camera/config/ignore_mask.png",
-  "day_night_method": "camera_color_mode",
-  "day_night_sample_interval_sec": 60,
   "local_model_path": "yolo11n.pt",
   "yolo_confidence": 0.25,
   "yolo_device": "cpu",
