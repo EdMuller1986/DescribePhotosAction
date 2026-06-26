@@ -126,7 +126,8 @@ def main() -> int:
         local_config = os.path.join(config_tmpdir, "surveillance.local.json")
 
         videos = _list_surveillance_videos(client, config_dir)
-        print(f"video candidates: {len(videos)}")
+        print(f"video candidates: {len(videos)}", flush=True)
+        print(f"surveillance config dir: {config_dir}/{config_file}", flush=True)
 
         for remote_video in videos:
             do_process, reason = _should_process_video(client, remote_video, force=force_reprocess)

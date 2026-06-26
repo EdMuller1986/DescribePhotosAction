@@ -47,6 +47,12 @@ def download_surveillance_setup(
     with open(local_config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
-    print(f"config: loaded from Drive/{remote_config}")
-    print(f"mask: loaded from Drive/{remote_mask}")
+    print(f"config: loaded from Drive/{remote_config}", flush=True)
+    print(f"mask: loaded from Drive/{remote_mask}", flush=True)
+    motion = config.get("motion") or {}
+    print(
+        "config motion from Drive: "
+        + json.dumps(motion, ensure_ascii=False, sort_keys=True),
+        flush=True,
+    )
     return config, mask_path, tmpdir

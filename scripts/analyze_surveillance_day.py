@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -45,13 +46,80 @@ def load_zones(config: dict[str, Any]) -> dict[str, Zone]:
 def motion_config_from_json(raw: dict[str, Any] | None) -> MotionDetectorConfig:
     raw = raw or {}
     return MotionDetectorConfig(
+        min_area_ratio=float(raw.get("min_area_ratio", 0.0008)),
+        max_area_ratio=float(raw.get("max_area_ratio", 0.35)),
         min_duration_sec=float(raw.get("min_duration_sec", 0.8)),
         merge_gap_sec=float(raw.get("merge_gap_sec", 2.0)),
         min_displacement_ratio=float(raw.get("min_displacement_ratio", 0.15)),
         max_oscillation_ratio=float(raw.get("max_oscillation_ratio", 8.0)),
-        sample_every_n_frames=int(raw.get("sample_every_n_frames", 2)),
+        mog2_history=int(raw.get("mog2_history", 500)),
+        mog2_var_threshold=float(raw.get("mog2_var_threshold", 32.0)),
+        mog2_detect_shadows=bool(raw.get("mog2_detect_shadows", False)),
         downscale_width=int(raw.get("downscale_width", 960)),
+        sample_every_n_frames=int(raw.get("sample_every_n_frames", 2)),
     )
+
+
+def _zone_label(raw: dict[str, Any]) -> str:
+    if "points" in raw:
+        return f"polygon({len(raw['points'])} points)"
+    return (
+        f"box x={raw.get('x_min')}..{raw.get('x_max')} "
+        f"y={raw.get('y_min')}..{raw.get('y_max')}"
+    )
+
+
+def log_effective_settings(
+    *,
+    config_path: str,
+    config: dict[str, Any],
+    ignore_mask: str | None,
+    motion_cfg: MotionDetectorConfig,
+) -> None:
+    mask_info = "none"
+    if ignore_mask:
+        mask_path = Path(ignore_mask)
+        if mask_path.is_file():
+            mask_info = f"{ignore_mask} ({mask_path.stat().st_size} bytes)"
+        else:
+            mask_info = f"{ignore_mask} (missing)"
+
+    zones = config.get("zones") or {}
+    zone_lines = [f"  - {name}: {_zone_label(raw)}" for name, raw in zones.items()]
+
+    print("settings:", flush=True)
+    print(f"  config_file: {config_path}", flush=True)
+    print(f"  ignore_mask: {mask_info}", flush=True)
+    print(
+        "  motion_json: "
+        + json.dumps(config.get("motion") or {}, ensure_ascii=False, sort_keys=True),
+        flush=True,
+    )
+    print(
+        "  motion_effective: "
+        + json.dumps(asdict(motion_cfg), ensure_ascii=False, sort_keys=True),
+        flush=True,
+    )
+    print(
+        "  yolo: "
+        + json.dumps(
+            {
+                "local_model_path": config.get("local_model_path", "yolo11n.pt"),
+                "yolo_confidence": config.get("yolo_confidence", 0.25),
+                "yolo_device": config.get("yolo_device", "cpu"),
+                "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 1.0),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    print("  zones:", flush=True)
+    if zone_lines:
+        for line in zone_lines:
+            print(line, flush=True)
+    else:
+        print("  - (none)", flush=True)
 
 
 def frame_in_segments(frame_index: int, segments: list[MotionSegment]) -> bool:
@@ -234,6 +302,12 @@ def main() -> int:
         f"duration: {format_duration(duration_sec)} "
         f"({total_frames} frames @ {fps:.2f} fps)",
         flush=True,
+    )
+    log_effective_settings(
+        config_path=args.config,
+        config=config,
+        ignore_mask=ignore_mask,
+        motion_cfg=motion_cfg,
     )
     print("step 1/3: motion detection", flush=True)
     segments, motion_stats = find_motion_segments(video_path, motion_cfg, ignore_mask)
