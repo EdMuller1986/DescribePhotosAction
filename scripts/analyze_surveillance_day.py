@@ -314,7 +314,23 @@ def main() -> int:
     print(
         "motion: "
         f"segments={int(motion_stats['segments_merged'])} "
-        f"rejected_wind={int(motion_stats['segments_rejected_wind'])}"
+        f"rejected={int(motion_stats['segments_rejected_wind'])}",
+        flush=True,
+    )
+    print(
+        "motion rejections: "
+        + json.dumps(
+            {
+                "short": int(motion_stats.get("reject_short", 0)),
+                "area_small": int(motion_stats.get("reject_area_small", 0)),
+                "area_large": int(motion_stats.get("reject_area_large", 0)),
+                "low_displacement": int(motion_stats.get("reject_low_displacement", 0)),
+                "high_oscillation": int(motion_stats.get("reject_high_oscillation", 0)),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        flush=True,
     )
     if not segments:
         print("warning: no motion segments after filtering", file=sys.stderr)

@@ -85,7 +85,7 @@ def _largest_motion_blob(mask: np.ndarray) -> tuple[float, tuple[int, int, int, 
     return area, (x, y, w, h)
 
 
-def _segment_metrics(samples: list[MotionBlobSample], frame_area: float) -> tuple[float, float, float, float]:
+def _segment_metrics(samples: list[MotionBlobSample]) -> tuple[float, float, float, float]:
     if not samples:
         return 0.0, 0.0, 0.0, 0.0
     peak_area_ratio = max(s.area_ratio for s in samples)
@@ -101,21 +101,27 @@ def _segment_metrics(samples: list[MotionBlobSample], frame_area: float) -> tupl
         path += math.hypot(cur.centroid_x - prev.centroid_x, cur.centroid_y - prev.centroid_y)
         aspects.append(cur.bbox_aspect)
     aspect_std = float(np.std(aspects)) if aspects else 0.0
-    oscillation = path / max(net, 1.0)
-    return peak_area_ratio, net / math.sqrt(frame_area), path / math.sqrt(frame_area), oscillation + aspect_std
-    # aspect_std nudges windy laundry (flapping aspect) upward
+    oscillation = path / max(net, 1e-6)
+    # Centroids are normalized 0..1; compare directly to min_displacement_ratio.
+    return peak_area_ratio, net, path, oscillation + aspect_std
+
+
+def _reject_reason(segment: MotionSegment, cfg: MotionDetectorConfig) -> str | None:
+    if segment.duration_sec < cfg.min_duration_sec:
+        return "short"
+    if segment.peak_area_ratio < cfg.min_area_ratio:
+        return "area_small"
+    if segment.peak_area_ratio > cfg.max_area_ratio:
+        return "area_large"
+    if segment.net_displacement < cfg.min_displacement_ratio:
+        return "low_displacement"
+    if segment.oscillation_ratio > cfg.max_oscillation_ratio:
+        return "high_oscillation"
+    return None
 
 
 def _accept_segment(segment: MotionSegment, cfg: MotionDetectorConfig) -> bool:
-    if segment.duration_sec < cfg.min_duration_sec:
-        return False
-    if segment.peak_area_ratio < cfg.min_area_ratio or segment.peak_area_ratio > cfg.max_area_ratio:
-        return False
-    if segment.net_displacement < cfg.min_displacement_ratio:
-        return False
-    if segment.oscillation_ratio > cfg.max_oscillation_ratio:
-        return False
-    return True
+    return _reject_reason(segment, cfg) is None
 
 
 def _merge_segments(segments: list[MotionSegment], gap_sec: float) -> list[MotionSegment]:
@@ -129,7 +135,7 @@ def _merge_segments(segments: list[MotionSegment], gap_sec: float) -> list[Motio
             prev.end_sec = max(prev.end_sec, seg.end_sec)
             prev.end_frame = max(prev.end_frame, seg.end_frame)
             prev.samples.extend(seg.samples)
-            peak, net, path, osc = _segment_metrics(prev.samples, 1.0)
+            peak, net, path, osc = _segment_metrics(prev.samples)
             prev.peak_area_ratio = max(prev.peak_area_ratio, peak)
             prev.net_displacement = max(prev.net_displacement, net)
             prev.path_length = max(prev.path_length, path)
@@ -165,7 +171,17 @@ def find_motion_segments(
     frame_index = 0
     processed = 0
     rejected_wind = 0
+    reject_reasons: dict[str, int] = {}
     last_logged_pct = -1
+
+    def _record_segment(segment: MotionSegment) -> None:
+        nonlocal rejected_wind
+        reason = _reject_reason(segment, cfg)
+        if reason is None:
+            segments.append(segment)
+            return
+        rejected_wind += 1
+        reject_reasons[reason] = reject_reasons.get(reason, 0) + 1
 
     while True:
         if total_frames > 0 and frame_index >= total_frames:
@@ -217,7 +233,7 @@ def find_motion_segments(
                 )
             )
         elif active_samples:
-            peak, net_disp, path_len, osc = _segment_metrics(active_samples, frame_area)
+            peak, net_disp, path_len, osc = _segment_metrics(active_samples)
             segment = MotionSegment(
                 start_sec=active_samples[0].timestamp_sec,
                 end_sec=active_samples[-1].timestamp_sec,
@@ -229,10 +245,7 @@ def find_motion_segments(
                 oscillation_ratio=osc,
                 samples=list(active_samples),
             )
-            if _accept_segment(segment, cfg):
-                segments.append(segment)
-            else:
-                rejected_wind += 1
+            _record_segment(segment)
             active_samples = []
 
         processed += 1
@@ -246,7 +259,7 @@ def find_motion_segments(
         frame_index += 1
 
     if active_samples:
-        peak, net_disp, path_len, osc = _segment_metrics(active_samples, 1.0)
+        peak, net_disp, path_len, osc = _segment_metrics(active_samples)
         segment = MotionSegment(
             start_sec=active_samples[0].timestamp_sec,
             end_sec=active_samples[-1].timestamp_sec,
@@ -258,10 +271,7 @@ def find_motion_segments(
             oscillation_ratio=osc,
             samples=list(active_samples),
         )
-        if _accept_segment(segment, cfg):
-            segments.append(segment)
-        else:
-            rejected_wind += 1
+        _record_segment(segment)
 
     cap.release()
     merged = _merge_segments(segments, cfg.merge_gap_sec)
@@ -272,5 +282,10 @@ def find_motion_segments(
         "segments_raw": float(len(segments)),
         "segments_merged": float(len(merged)),
         "segments_rejected_wind": float(rejected_wind),
+        "reject_short": float(reject_reasons.get("short", 0)),
+        "reject_area_small": float(reject_reasons.get("area_small", 0)),
+        "reject_area_large": float(reject_reasons.get("area_large", 0)),
+        "reject_low_displacement": float(reject_reasons.get("low_displacement", 0)),
+        "reject_high_oscillation": float(reject_reasons.get("high_oscillation", 0)),
     }
     return merged, stats
