@@ -61,7 +61,7 @@ creds = Credentials.from_authorized_user_info(creds_info)
 
 service = build("drive", "v3", credentials=creds)
 
-folder_id = "root"  # Замени на ID папки при необходимости
+folder_id = "root"
 
 for root_dir, dirs, files in os.walk("download"):
     for file_name in files:
