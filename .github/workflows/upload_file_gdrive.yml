@@ -31,7 +31,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y aria2
+          sudo apt-get install -y aria2 python3-pip
+          pip3 install --user google-api-python-client google-auth
 
       - name: Download via hash
         run: |
@@ -42,7 +43,7 @@ jobs:
 
       - name: Upload to Google Drive
         run: |
-          python3 -c '
+          python3 - << 'PYSCRIPT'
 import os
 import json
 import sys
@@ -68,5 +69,5 @@ for root_dir, dirs, files in os.walk("download"):
         file_metadata = {"name": file_name, "parents": [folder_id]}
         media = MediaFileUpload(file_path, resumable=True)
         uploaded = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-        print(f"Загружен: {file_name} (ID: {uploaded.get(\"id\")})")
-'
+        print(f"Загружен: {file_name} (ID: {uploaded.get('id')})")
+PYSCRIPT
