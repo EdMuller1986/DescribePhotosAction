@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       hash:
-        description: 'Хэш (оставь пустым для dry run)'
+        description: "Хэш или magnet-ссылка. Оставь пустым для dry run"
         required: false
         type: string
-        default: ''
+        default: ""
 
 permissions:
   contents: read
@@ -17,12 +17,10 @@ jobs:
     name: Upload to Google Drive
     runs-on: ubuntu-latest
     timeout-minutes: 180
+
     env:
-      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
       GOOGLE_DRIVE_OAUTH_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_OAUTH_CREDENTIALS }}
-      GOOGLE_DRIVE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_ID }}
-      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET }}
-      GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN }}
+      GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
       INPUT_HASH: ${{ inputs.hash }}
 
     steps:
@@ -33,20 +31,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y aria2 python3-pip
-          pip3 install --user google-api-python-client google-auth
+          pip3 install --user google-api-python-client google-auth google-auth-oauthlib
 
-      - name: Download via hash
+      - name: Download file
         run: |
           mkdir -p download
           cd download
+
           if [ -z "${INPUT_HASH}" ]; then
-            echo "Dry run mode: скачиваем тестовый файл 100MB"
-            # Альтернативные надёжные ссылки
-            curl -L -o test_100mb.bin "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" || \
-            curl -L -o test_100mb.bin "http://ipv4.download.thinkbroadband.com/100MB.zip"
+            echo "Dry run mode: скачиваем тестовый файл"
+            curl -L -o test_file.png "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
           else
-            echo "Скачивание по хэшу: ${INPUT_HASH}"
-            aria2c --seed-time=0 --bt-metadata-only=true --bt-save-metadata=true "${INPUT_HASH}" || true
+            echo "Скачивание: ${INPUT_HASH}"
             aria2c --seed-time=0 --dir=. "${INPUT_HASH}"
           fi
 
