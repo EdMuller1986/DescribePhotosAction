@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       hash:
-        description: "Хэш или magnet-ссылка. Оставь пустым для dry run"
+        description: "Magnet-ссылка или URL файла. Оставьте пустым для теста."
         required: false
-        type: string
         default: ""
 
 permissions:
@@ -14,13 +13,11 @@ permissions:
 
 jobs:
   upload:
-    name: Upload to Google Drive
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     env:
       GOOGLE_DRIVE_OAUTH_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_OAUTH_CREDENTIALS }}
-      GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
       INPUT_HASH: ${{ inputs.hash }}
 
     steps:
@@ -39,10 +36,12 @@ jobs:
           cd download
 
           if [ -z "${INPUT_HASH}" ]; then
-            echo "Dry run mode: скачиваем тестовый файл"
-            curl -L -o test_file.png "https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
+            echo "Dry run: скачиваем тестовый файл"
+            curl -L \
+              -o test_file.png \
+              https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png
           else
-            echo "Скачивание: ${INPUT_HASH}"
+            echo "Downloading: ${INPUT_HASH}"
             aria2c --seed-time=0 --dir=. "${INPUT_HASH}"
           fi
 
