@@ -30,20 +30,43 @@ jobs:
           sudo apt-get install -y aria2 python3-pip
           pip3 install --user google-api-python-client google-auth google-auth-oauthlib
 
-      - name: Download file
+      - name: Download and Upload in parallel
         run: |
           mkdir -p download
-          cd download
-
+          
+          echo "Проверка места на Google Drive..."
+          python3 scripts/upload_to_gdrive.py --check-space
+          
+          echo "Свободное место на локальном диске:"
+          df -h /
+          
+          # 1. Запускаем загрузчик-пылесос
+          echo "Запуск загрузчика-пылесоса..."
+          python3 scripts/upload_to_gdrive.py --watch &
+          UPLOAD_PID=$!
+          
+          # 2. Начинаем скачивание
           if [ -z "${INPUT_HASH}" ]; then
             echo "Dry run: скачиваем тестовый файл"
             curl -L \
-              -o test_file.png \
+              -o download/test_file.png \
               https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png
           else
             echo "Downloading: ${INPUT_HASH}"
-            aria2c --seed-time=0 --dir=. "${INPUT_HASH}"
+            # aria2c покажет размер торрента в начале логов
+            aria2c --seed-time=0 \
+                   --dir=download \
+                   --file-allocation=none \
+                   --summary-interval=60 \
+                   "${INPUT_HASH}"
           fi
-
-      - name: Upload to Google Drive
-        run: python3 scripts/upload_to_gdrive.py
+          
+          echo "Скачивание завершено. Проверка остатков..."
+          sleep 30
+          kill $UPLOAD_PID || true
+          
+          # Финальный проход на случай если что-то осталось
+          python3 scripts/upload_to_gdrive.py
+          
+          echo "Свободное место на диске после завершения:"
+          df -h /
