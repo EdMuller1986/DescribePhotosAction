@@ -59,39 +59,42 @@ def main():
         print(f"Ошибка JSON: {ex}", file=sys.stderr)
         sys.exit(1)
 
-    # Сохраняем client secrets во временный файл
-    client_secrets_file = "/tmp/client_secrets.json"
-    with open(client_secrets_file, "w") as f:
-        json.dump(creds_json, f)
-
     SCOPES = ["https://www.googleapis.com/auth/drive"]
-
     creds = None
-    token_file = "/tmp/token.json"
 
-    # Если есть сохраненный token, загружаем его
-    if os.path.exists(token_file):
+    # 1. Пытаемся загрузить как авторизованного пользователя (если есть refresh_token)
+    if "refresh_token" in creds_json:
         try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+            creds = Credentials.from_authorized_user_info(creds_json, SCOPES)
         except Exception as e:
-            print(f"Ошибка при загрузке token.json: {e}", file=sys.stderr)
+            print(f"Предупреждение: Не удалось загрузить Credentials из JSON: {e}", file=sys.stderr)
 
-    # Если нет валидного токена, создаем новый через Flow
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("Обновляем токен...")
+    # 2. Если токен просрочен, но есть refresh_token - обновляем
+    if creds and creds.expired and creds.refresh_token:
+        print("Обновляем просроченный токен...")
+        try:
             creds.refresh(Request())
-        else:
-            print("Получаем новый токен через OAuth Flow...")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                client_secrets_file, SCOPES
-            )
-            # В GitHub Actions используем local_server=False
-            creds = flow.run_local_server(port=0, open_browser=False)
+        except Exception as e:
+            print(f"Ошибка при обновлении токена: {e}", file=sys.stderr)
+            creds = None
 
-        # Сохраняем токен для следующего использования
-        with open(token_file, "w") as token:
-            token.write(creds.to_json())
+    # 3. Если всё еще нет валидных прав и мы в CI (GitHub Actions), выдаем ошибку
+    if not creds or not creds.valid:
+        if os.getenv("GITHUB_ACTIONS"):
+            print("Ошибка: В среде GitHub Actions нет валидного токена и refresh_token.", file=sys.stderr)
+            print("Пожалуйста, получите refresh_token локально с помощью scripts/get_gdrive_oauth_token.py", file=sys.stderr)
+            print("и обновите секрет GOOGLE_DRIVE_OAUTH_CREDENTIALS.", file=sys.stderr)
+            sys.exit(1)
+        
+        # Только если мы НЕ в CI, пробуем интерактивный вход
+        print("Получаем новый токен через интерактивный OAuth Flow...")
+        # (Для этого нужен формат client_secrets.json)
+        client_secrets_file = "/tmp/client_secrets.json"
+        with open(client_secrets_file, "w") as f:
+            json.dump(creds_json, f)
+        
+        flow = InstalledAppFlow.from_client_secrets_file(client_secrets_file, SCOPES)
+        creds = flow.run_local_server(port=0, open_browser=False)
 
     service = build("drive", "v3", credentials=creds)
 
