@@ -7,6 +7,10 @@ on:
         description: "Magnet-ссылка или URL файла. Оставьте пустым для теста."
         required: false
         default: ""
+      filter:
+        description: "Фильтр файлов (например, 'S01' или 'E01'). Если пусто — качаем всё."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -19,6 +23,7 @@ jobs:
     env:
       GOOGLE_DRIVE_OAUTH_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_OAUTH_CREDENTIALS }}
       INPUT_HASH: ${{ inputs.hash }}
+      INPUT_FILTER: ${{ inputs.filter }}
 
     steps:
       - name: Checkout repository
@@ -53,11 +58,32 @@ jobs:
               https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png
           else
             echo "Downloading: ${INPUT_HASH}"
-            # aria2c покажет размер торрента в начале логов
+            
+            SELECT_ARG=""
+            if [ -n "${INPUT_FILTER}" ]; then
+              echo "Применяем фильтр: ${INPUT_FILTER}"
+              # Сначала получаем список файлов (может занять время для магнитов)
+              # Используем таймаут и сохранение метаданных если это магнит
+              aria2c --show-files=true --bt-metadata-only=true --bt-save-metadata=true "${INPUT_HASH}" > file_list.txt || true
+              
+              # Парсим индексы файлов, соответствующих фильтру
+              # Строки выглядят как: " 1|./path/to/file (100MB)"
+              INDICES=$(grep -i "${INPUT_FILTER}" file_list.txt | awk -F'|' '{print $1}' | tr -d ' ' | paste -sd "," -)
+              
+              if [ -z "${INDICES}" ]; then
+                echo "Файлы по фильтру '${INPUT_FILTER}' не найдены. Качаем всё."
+              else
+                echo "Выбраны файлы с индексами: ${INDICES}"
+                SELECT_ARG="--select-file=${INDICES}"
+              fi
+            fi
+
+            # --file-allocation=none критичен, чтобы не переполнить диск пустыми файлами
             aria2c --seed-time=0 \
                    --dir=download \
                    --file-allocation=none \
                    --summary-interval=60 \
+                   ${SELECT_ARG} \
                    "${INPUT_HASH}"
           fi
           
