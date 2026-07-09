@@ -147,12 +147,27 @@ def main():
         current_files_to_upload = []
         for root, _, files in os.walk(upload_dir):
             for file_name in files:
-                if file_name.endswith(".aria2"):
+                if file_name.endswith(".aria2") or file_name.endswith(".torrent"):
                     continue
+                
                 file_path = os.path.join(root, file_name)
                 aria2_control_file = file_path + ".aria2"
+                
+                # Проверка на готовность:
+                # 1. Нет файла .aria2
+                # 2. Файл существует и его размер > 0
+                # 3. Файл не менялся последние 5 секунд (защита от ложного срабатывания в начале закачки)
                 if file_path not in uploaded_files and not os.path.exists(aria2_control_file):
-                    current_files_to_upload.append(file_path)
+                    if os.path.exists(file_path):
+                        size = os.path.getsize(file_path)
+                        mtime = os.path.getmtime(file_path)
+                        now = time.time()
+                        
+                        if size > 0 and (now - mtime) > 5:
+                            current_files_to_upload.append(file_path)
+                        elif size == 0:
+                            # Игнорируем пустые файлы, они еще не начали качаться
+                            continue
 
         for file_path in current_files_to_upload:
             try:

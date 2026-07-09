@@ -62,16 +62,41 @@ jobs:
             SELECT_ARG=""
             if [ -n "${INPUT_FILTER}" ]; then
               echo "Применяем фильтр: ${INPUT_FILTER}"
-              # Сначала получаем список файлов (может занять время для магнитов)
-              # Используем таймаут и сохранение метаданных если это магнит
-              aria2c --show-files=true --bt-metadata-only=true --bt-save-metadata=true "${INPUT_HASH}" > file_list.txt || true
+              
+              # Для Magnet-ссылок сначала нужно получить метаданные (.torrent файл)
+              if [[ "${INPUT_HASH}" == magnet:* ]]; then
+                echo "Fetching torrent metadata..."
+                # Качаем только метаданные, сохраняем их в файл
+                # --bt-metadata-only=true скачивает только инфо-секцию
+                # --bt-save-metadata=true сохраняет результат в .torrent файл
+                aria2c --bt-metadata-only=true \
+                       --bt-save-metadata=true \
+                       --summary-interval=0 \
+                       --quiet=true \
+                       "${INPUT_HASH}" || true
+                
+                # Ищем скачанный .torrent файл
+                TORRENT_FILE=$(ls *.torrent 2>/dev/null | head -n 1)
+                if [ -n "${TORRENT_FILE}" ]; then
+                  echo "Metadata fetched: ${TORRENT_FILE}"
+                  aria2c --show-files=true "${TORRENT_FILE}" > file_list.txt
+                else
+                  echo "Не удалось получить метаданные за разумное время."
+                  aria2c --show-files=true "${INPUT_HASH}" > file_list.txt || true
+                fi
+              else
+                # Для прямых ссылок на .torrent или файлы
+                aria2c --show-files=true "${INPUT_HASH}" > file_list.txt || true
+              fi
               
               # Парсим индексы файлов, соответствующих фильтру
-              # Строки выглядят как: " 1|./path/to/file (100MB)"
+              # Строки в aria2c -S выглядят как: "1|./path/to/file (100MB)"
               INDICES=$(grep -i "${INPUT_FILTER}" file_list.txt | awk -F'|' '{print $1}' | tr -d ' ' | paste -sd "," -)
               
               if [ -z "${INDICES}" ]; then
-                echo "Файлы по фильтру '${INPUT_FILTER}' не найдены. Качаем всё."
+                echo "Файлы по фильтру '${INPUT_FILTER}' не найдены в:"
+                cat file_list.txt
+                echo "Качаем всё."
               else
                 echo "Выбраны файлы с индексами: ${INDICES}"
                 SELECT_ARG="--select-file=${INDICES}"
